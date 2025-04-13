@@ -36,10 +36,16 @@ class Form(StatesGroup):
     waiting_for_amount = State()
     waiting_for_type = State()
 
+class ResourceForm(StatesGroup):
+    choosing_resource_type = State()
+    choosing_account_type = State()
+    entering_quantity = State()
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
 
+# ----------- Пополнение -----------
 @dp.message_handler(lambda msg: msg.text == "💰 Заказать пополнение")
 async def order_topup(message: types.Message):
     kb = InlineKeyboardMarkup(row_width=2)
@@ -105,8 +111,7 @@ async def type_selected(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
 
-
-
+# ----------- Обработка статусов -----------
 @dp.callback_query_handler(lambda c: c.data.startswith("approve") or c.data.startswith("decline"))
 async def process_callback(query: types.CallbackQuery):
     action, user_id = query.data.split(":")
@@ -121,16 +126,7 @@ async def process_callback(query: types.CallbackQuery):
         await query.message.edit_reply_markup(reply_markup=None)
         await query.answer("Отмечено как отклонено.")
 
-@dp.message_handler(lambda msg: msg.text == "❌ Отмена", state="*")
-async def cancel_handler(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer("Действие отменено. Возвращаю в главное меню ⤴️", reply_markup=menu_kb)
-
-class ResourceForm(StatesGroup):
-    choosing_resource_type = State()
-    choosing_account_type = State()
-    entering_quantity = State()
-
+# ----------- Расходники -----------
 @dp.message_handler(lambda msg: msg.text == "📦 Запросить расходники")
 async def request_resources(message: types.Message):
     kb = InlineKeyboardMarkup()
@@ -193,6 +189,11 @@ async def handle_quantity(message: types.Message, state: FSMContext):
     await bot.send_message(ADMIN_ID, body)
     await message.answer("✅ Заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
+
+@dp.message_handler(lambda msg: msg.text == "❌ Отмена", state="*")
+async def cancel_handler(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("Действие отменено. Возвращаю в главное меню ⤴️", reply_markup=menu_kb)
 
 # ================== Webhook Setup =====================
 
