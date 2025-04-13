@@ -1,2 +1,2 @@
-API_TOKEN = "твой_токен_сюда"
-ADMIN_ID = 123456789  # Замени на свой Telegram user ID
+API_TOKEN = "7829191204:AAF3utRWorh8gVGp-JbLngiZlaog4F6gf7k"
+ADMIN_ID = 582761505  # Замени на свой Telegram user ID
