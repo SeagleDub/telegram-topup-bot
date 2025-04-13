@@ -3,7 +3,7 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from config import API_TOKEN
 from handlers import topup, supplies
 
-bot = Bot(token=7829191204:AAF3utRWorh8gVGp-JbLngiZlaog4F6gf7k)
+bot = Bot(token="7829191204:AAF3utRWorh8gVGp-JbLngiZlaog4F6gf7k")
 dp = Dispatcher(bot, storage=MemoryStorage())
 
 # Регистрация хендлеров
