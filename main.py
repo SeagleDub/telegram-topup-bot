@@ -23,7 +23,10 @@ dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
 
 menu_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-menu_kb.add(KeyboardButton("💰 Заказать пополнение"))
+menu_kb.add(
+    KeyboardButton("💰 Заказать пополнение"),
+    KeyboardButton("📦 Запросить расходники")
+)
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
 cancel_kb.add(KeyboardButton("❌ Отмена"))
@@ -102,6 +105,8 @@ async def type_selected(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
 
+
+
 @dp.callback_query_handler(lambda c: c.data.startswith("approve") or c.data.startswith("decline"))
 async def process_callback(query: types.CallbackQuery):
     action, user_id = query.data.split(":")
@@ -120,6 +125,74 @@ async def process_callback(query: types.CallbackQuery):
 async def cancel_handler(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Действие отменено. Возвращаю в главное меню ⤴️", reply_markup=menu_kb)
+
+class ResourceForm(StatesGroup):
+    choosing_resource_type = State()
+    choosing_account_type = State()
+    entering_quantity = State()
+
+@dp.message_handler(lambda msg: msg.text == "📦 Запросить расходники")
+async def request_resources(message: types.Message):
+    kb = InlineKeyboardMarkup()
+    kb.add(
+        InlineKeyboardButton("👤 Добавить аккаунты", callback_data="res:accounts"),
+        InlineKeyboardButton("🌐 Добавить домены", callback_data="res:domains")
+    )
+    await message.answer("Выберите категорию:", reply_markup=kb)
+    await ResourceForm.choosing_resource_type.set()
+
+@dp.callback_query_handler(lambda c: c.data.startswith("res:"), state=ResourceForm.choosing_resource_type)
+async def resource_type_chosen(query: types.CallbackQuery, state: FSMContext):
+    _, choice = query.data.split(":")
+    await state.update_data(type=choice)
+
+    if choice == "accounts":
+        kb = InlineKeyboardMarkup()
+        kb.add(
+            InlineKeyboardButton("📘 Сетап КИНГ+10 авторегов", callback_data="acc:king10"),
+            InlineKeyboardButton("📘 КИНГ + 1-3 БМ", callback_data="acc:kingbm"),
+            InlineKeyboardButton("📘 Автореги", callback_data="acc:autoreg")
+        )
+        await query.message.answer("Выберите категорию аккаунтов (если нет в наличии — будет добавлено то, что есть):", reply_markup=kb)
+        await ResourceForm.choosing_account_type.set()
+    else:
+        await query.message.answer("Введите количество доменов:")
+        await ResourceForm.entering_quantity.set()
+
+    await query.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith("acc:"), state=ResourceForm.choosing_account_type)
+async def account_type_chosen(query: types.CallbackQuery, state: FSMContext):
+    _, acc_type = query.data.split(":")
+    await state.update_data(account_type=acc_type)
+    await query.message.answer("Введите количество:")
+    await ResourceForm.entering_quantity.set()
+    await query.answer()
+
+@dp.message_handler(state=ResourceForm.entering_quantity)
+async def handle_quantity(message: types.Message, state: FSMContext):
+    quantity = message.text.strip()
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет username"
+
+    data = await state.get_data()
+    res_type = data.get("type")
+
+    if res_type == "accounts":
+        acc_type = data.get("account_type")
+        acc_map = {
+            "king10": "📘 Сетап КИНГ+10 авторегов",
+            "kingbm": "📘 КИНГ + 1-3 БМ",
+            "autoreg": "📘 Автореги"
+        }
+        type_text = acc_map.get(acc_type, "❓ Неизвестно")
+        body = f"🔔 Запрос на аккаунты от @{username} (ID: {user_id})\nКатегория: {type_text}\nКоличество: {quantity}"
+    else:
+        body = f"🔔 Запрос на домены от @{username} (ID: {user_id})\nКоличество: {quantity}"
+
+    await bot.send_message(ADMIN_ID, body)
+    await message.answer("✅ Заявка отправлена администратору.", reply_markup=menu_kb)
+    await state.finish()
 
 # ================== Webhook Setup =====================
 
