@@ -8,8 +8,8 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils.executor import start_webhook
 from aiohttp import web
 
-API_TOKEN = os.getenv("BOT_TOKEN") or "ТВОЙ_ТОКЕН"
-ADMIN_ID = int(os.getenv("ADMIN_ID") or 123456789)
+API_TOKEN = os.getenv("BOT_TOKEN") or "7829191204:AAFafJxCIapC-0RJwk4N_TKlJxuL19eVk9g"
+ADMIN_ID = int(os.getenv("ADMIN_ID") or 582761505)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL") or "https://telegram-topup-bot-j9t5.onrender.com"
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
