@@ -8,7 +8,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 
-API_TOKEN = "ТОКЕН"  # 👈 замени на свой
+API_TOKEN = "7829191204:AAF3utRWorh8gVGp-JbLngiZlaog4F6gf7k"  # 👈 замени на свой
 ADMIN_ID = 582761505  # 👈 замени на свой
 
 bot = Bot(token=API_TOKEN)
