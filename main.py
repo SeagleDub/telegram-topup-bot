@@ -6,7 +6,6 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.utils.executor import start_webhook
-from aiohttp import web
 
 API_TOKEN = os.getenv("BOT_TOKEN") or "7829191204:AAFafJxCIapC-0RJwk4N_TKlJxuL19eVk9g"
 ADMIN_ID = int(os.getenv("ADMIN_ID") or 582761505)
@@ -44,6 +43,8 @@ class Form(StatesGroup):
 async def send_welcome(message: types.Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
 
+# ========== Пополнение ==========
+
 @dp.message_handler(lambda msg: msg.text == "💰 Заказать пополнение")
 async def order_topup(message: types.Message):
     kb = InlineKeyboardMarkup(row_width=2)
@@ -66,6 +67,9 @@ async def bank_selected(query: types.CallbackQuery, state: FSMContext):
 @dp.message_handler(state=Form.waiting_for_amount)
 async def get_amount(message: types.Message, state: FSMContext):
     amount = message.text.strip()
+    if not amount.isdigit():
+        await message.answer("Пожалуйста, введите корректную сумму.")
+        return
     await state.update_data(amount=amount)
 
     kb = InlineKeyboardMarkup(row_width=2)
@@ -109,6 +113,8 @@ async def type_selected(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
 
+# ========== Расходники ==========
+
 @dp.message_handler(lambda msg: msg.text == "📂 Запросить расходники")
 async def request_supplies(message: types.Message):
     kb = InlineKeyboardMarkup()
@@ -126,9 +132,9 @@ async def supply_category_selected(query: types.CallbackQuery, state: FSMContext
     if category == "accounts":
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("👤 Сетап КИНГ+10 авторегов (с ФП и почтой)", callback_data="acc:set1"),
-            InlineKeyboardButton("👤 КИНГ + 1-3 БМ (с ФП и почтой)", callback_data="acc:set2"),
-            InlineKeyboardButton("👤 Автореги (с ФП и почтой)", callback_data="acc:set3")
+            InlineKeyboardButton("👤 Сетап КИНГ+10 авторегов", callback_data="acc:set1"),
+            InlineKeyboardButton("👤 КИНГ + 1-3 БМ", callback_data="acc:set2"),
+            InlineKeyboardButton("👤 Автореги", callback_data="acc:set3")
         )
         await query.message.answer("Выберите категорию (если нет в наличии, то будет добавлено то, что есть):", reply_markup=kb)
         await Form.choosing_account_type.set()
@@ -147,6 +153,10 @@ async def account_type_chosen(query: types.CallbackQuery, state: FSMContext):
 @dp.message_handler(state=Form.entering_account_quantity)
 async def handle_account_quantity(message: types.Message, state: FSMContext):
     quantity = message.text.strip()
+    if not quantity.isdigit():
+        await message.answer("Введите корректное число.")
+        return
+
     data = await state.get_data()
     acc_type = data.get("account_type")
 
@@ -178,6 +188,10 @@ async def handle_account_quantity(message: types.Message, state: FSMContext):
 @dp.message_handler(state=Form.entering_domain_quantity)
 async def handle_domain_quantity(message: types.Message, state: FSMContext):
     quantity = message.text.strip()
+    if not quantity.isdigit():
+        await message.answer("Введите корректное число.")
+        return
+
     user_id = message.from_user.id
     username = message.from_user.username or "нет username"
 
@@ -195,6 +209,8 @@ async def handle_domain_quantity(message: types.Message, state: FSMContext):
 
     await message.answer("Запрос отправлен администратору.", reply_markup=menu_kb)
     await state.finish()
+
+# ========= Общие ==========
 
 @dp.callback_query_handler(lambda c: c.data.startswith("approve") or c.data.startswith("decline"))
 async def process_callback(query: types.CallbackQuery):
