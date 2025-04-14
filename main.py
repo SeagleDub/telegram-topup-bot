@@ -1,4 +1,3 @@
-
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -24,12 +23,12 @@ dp.middleware.setup(LoggingMiddleware())
 
 menu_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 menu_kb.add(
-    KeyboardButton("💰 Заказать пополнение"),
-    KeyboardButton("📂 Запросить расходники")
+    KeyboardButton("\U0001F4B0 Заказать пополнение"),
+    KeyboardButton("\U0001F4C2 Запросить расходники")
 )
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-cancel_kb.add(KeyboardButton("❌ Отмена"))
+cancel_kb.add(KeyboardButton("\u274c Отмена"))
 
 class Form(StatesGroup):
     waiting_for_bank = State()
@@ -44,15 +43,17 @@ class Form(StatesGroup):
 async def send_welcome(message: types.Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
 
-@dp.message_handler(lambda msg: msg.text == "💰 Заказать пополнение")
+# ================= ПОПОЛНЕНИЕ ===================
+
+@dp.message_handler(lambda msg: msg.text == "\U0001F4B0 Заказать пополнение")
 async def order_topup(message: types.Message):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("🏦 AdsCard", callback_data="bank:adscard"),
-        InlineKeyboardButton("💳 Traffic.cards", callback_data="bank:trafficcards")
+        InlineKeyboardButton("\U0001F3E6 AdsCard", callback_data="bank:adscard"),
+        InlineKeyboardButton("\U0001F4B3 Traffic.cards", callback_data="bank:trafficcards")
     )
     await message.answer("Выберите банк:", reply_markup=kb)
-    await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    await message.answer("\u274c В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     await Form.waiting_for_bank.set()
 
 @dp.callback_query_handler(lambda c: c.data.startswith("bank:"), state=Form.waiting_for_bank)
@@ -65,7 +66,7 @@ async def bank_selected(query: types.CallbackQuery, state: FSMContext):
 
 @dp.message_handler(state=Form.waiting_for_amount)
 async def get_amount(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    if message.text == "\u274c Отмена":
         await cancel_handler(message, state)
         return
 
@@ -78,11 +79,10 @@ async def get_amount(message: types.Message, state: FSMContext):
 
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("⚡ Срочное", callback_data="type:urgent"),
-        InlineKeyboardButton("🕘 Не срочное (до 21:00)", callback_data="type:normal")
+        InlineKeyboardButton("\u26A1 Срочное", callback_data="type:urgent"),
+        InlineKeyboardButton("\U0001F558 Не срочное (до 21:00)", callback_data="type:normal")
     )
     await message.answer("Выберите тип пополнения:", reply_markup=kb)
-    await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     await Form.waiting_for_type.set()
 
 @dp.callback_query_handler(lambda c: c.data.startswith("type:"), state=Form.waiting_for_type)
@@ -97,34 +97,37 @@ async def type_selected(query: types.CallbackQuery, state: FSMContext):
 
     bank = data.get("bank", "не указан")
     amount = data.get("amount", "не указано")
-    topup_type_text = "⚡ Срочное" if topup_type == "urgent" else "🕘 Не срочное (до 21:00)"
+    topup_type_text = "\u26A1 Срочное" if topup_type == "urgent" else "\U0001F558 Не срочное (до 21:00)"
 
     kb = InlineKeyboardMarkup()
     kb.add(
-        InlineKeyboardButton("✅ Выполнено", callback_data=f"approve:{user_id}"),
-        InlineKeyboardButton("❌ Отклонено", callback_data=f"decline:{user_id}")
+        InlineKeyboardButton("\u2705 Выполнено", callback_data=f"approve:{user_id}"),
+        InlineKeyboardButton("\u274c Отклонено", callback_data=f"decline:{user_id}")
     )
 
     await bot.send_message(
         ADMIN_ID,
-        f"🔔 Новая заявка от @{username} (ID: {user_id})\n"
-        f"🏦 Банк: {bank}\n"
-        f"💳 Сумма: {amount}\n"
-        f"📌 Тип: {topup_type_text}",
+        f"\U0001F514 Новая заявка от @{username} (ID: {user_id})\n"
+        f"\U0001F3E6 Банк: {bank}\n"
+        f"\U0001F4B3 Сумма: {amount}\n"
+        f"\U0001F4CC Тип: {topup_type_text}",
         reply_markup=kb
     )
 
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
 
-@dp.message_handler(lambda msg: msg.text == "📂 Запросить расходники")
+# ================== РАСХОДНИКИ ===================
+
+@dp.message_handler(lambda msg: msg.text == "\U0001F4C2 Запросить расходники")
 async def request_supplies(message: types.Message):
     kb = InlineKeyboardMarkup()
     kb.add(
-        InlineKeyboardButton("👤 Добавить аккаунты", callback_data="supply:accounts"),
-        InlineKeyboardButton("📄 Добавить домены", callback_data="supply:domains")
+        InlineKeyboardButton("\U0001F464 Добавить аккаунты", callback_data="supply:accounts"),
+        InlineKeyboardButton("\U0001F4C4 Добавить домены", callback_data="supply:domains")
     )
     await message.answer("Выберите категорию:", reply_markup=kb)
+    await message.answer("\u274c В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     await Form.choosing_supply_category.set()
 
 @dp.callback_query_handler(lambda c: c.data.startswith("supply:"), state=Form.choosing_supply_category)
@@ -134,11 +137,12 @@ async def supply_category_selected(query: types.CallbackQuery, state: FSMContext
     if category == "accounts":
         kb = InlineKeyboardMarkup(row_width=1)
         kb.add(
-            InlineKeyboardButton("👤 Сетап КИНГ+10 авторегов", callback_data="acc:set1"),
-            InlineKeyboardButton("👤 КИНГ + 1-3 БМ", callback_data="acc:set2"),
-            InlineKeyboardButton("👤 Автореги", callback_data="acc:set3")
+            InlineKeyboardButton("\U0001F464 Сетап КИНГ+10 авторегов", callback_data="acc:set1"),
+            InlineKeyboardButton("\U0001F464 КИНГ + 1-3 БМ", callback_data="acc:set2"),
+            InlineKeyboardButton("\U0001F464 Автореги", callback_data="acc:set3")
         )
         await query.message.answer("Выберите категорию (если нет в наличии, то будет добавлено то, что есть):", reply_markup=kb)
+        await query.message.answer("\u274c В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
         await Form.choosing_account_type.set()
     else:
         await query.message.answer("Введите количество доменов:", reply_markup=cancel_kb)
@@ -220,6 +224,8 @@ async def handle_domain_quantity(message: types.Message, state: FSMContext):
     await message.answer("Запрос отправлен администратору.", reply_markup=menu_kb)
     await state.finish()
 
+# ================== ОБЩИЕ ДЕЙСТВИЯ ===================
+
 @dp.callback_query_handler(lambda c: c.data.startswith("approve") or c.data.startswith("decline"))
 async def process_callback(query: types.CallbackQuery):
     action, user_id = query.data.split(":")
@@ -238,6 +244,37 @@ async def process_callback(query: types.CallbackQuery):
 async def cancel_handler(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb)
+
+# ================== АДМИН КОМАНДЫ ===================
+
+@dp.message_handler(commands=['sendto'])
+async def send_to_user(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        _, user_id, *text = message.text.split()
+        user_id = int(user_id)
+        text = ' '.join(text)
+        await bot.send_message(user_id, text)
+        await message.answer("Сообщение отправлено ✅")
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
+
+@dp.message_handler(commands=['sendall'])
+async def send_to_many(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        _, id_list, *text = message.text.split()
+        ids = list(map(int, id_list.split(",")))
+        text = ' '.join(text)
+        for uid in ids:
+            await bot.send_message(uid, text)
+        await message.answer("Сообщения отправлены ✅")
+    except Exception as e:
+        await message.answer(f"Ошибка: {e}")
+
+# ================== WEBHOOK ===================
 
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
