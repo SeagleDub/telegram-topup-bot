@@ -1,3 +1,4 @@
+
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -43,8 +44,6 @@ class Form(StatesGroup):
 async def send_welcome(message: types.Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
 
-# ========== Пополнение ==========
-
 @dp.message_handler(lambda msg: msg.text == "💰 Заказать пополнение")
 async def order_topup(message: types.Message):
     kb = InlineKeyboardMarkup(row_width=2)
@@ -66,10 +65,15 @@ async def bank_selected(query: types.CallbackQuery, state: FSMContext):
 
 @dp.message_handler(state=Form.waiting_for_amount)
 async def get_amount(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
     amount = message.text.strip()
     if not amount.isdigit():
         await message.answer("Пожалуйста, введите корректную сумму.")
         return
+
     await state.update_data(amount=amount)
 
     kb = InlineKeyboardMarkup(row_width=2)
@@ -113,8 +117,6 @@ async def type_selected(query: types.CallbackQuery, state: FSMContext):
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.finish()
 
-# ========== Расходники ==========
-
 @dp.message_handler(lambda msg: msg.text == "📂 Запросить расходники")
 async def request_supplies(message: types.Message):
     kb = InlineKeyboardMarkup()
@@ -152,6 +154,10 @@ async def account_type_chosen(query: types.CallbackQuery, state: FSMContext):
 
 @dp.message_handler(state=Form.entering_account_quantity)
 async def handle_account_quantity(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
     quantity = message.text.strip()
     if not quantity.isdigit():
         await message.answer("Введите корректное число.")
@@ -213,8 +219,6 @@ async def handle_domain_quantity(message: types.Message, state: FSMContext):
 
     await message.answer("Запрос отправлен администратору.", reply_markup=menu_kb)
     await state.finish()
-
-# ========= Общие ==========
 
 @dp.callback_query_handler(lambda c: c.data.startswith("approve") or c.data.startswith("decline"))
 async def process_callback(query: types.CallbackQuery):
