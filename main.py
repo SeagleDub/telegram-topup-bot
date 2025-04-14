@@ -187,6 +187,10 @@ async def handle_account_quantity(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=Form.entering_domain_quantity)
 async def handle_domain_quantity(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
     quantity = message.text.strip()
     if not quantity.isdigit():
         await message.answer("Введите корректное число.")
