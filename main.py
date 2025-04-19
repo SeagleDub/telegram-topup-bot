@@ -136,8 +136,9 @@ async def supply_category_selected(query: CallbackQuery, state: FSMContext):
     
     if category == "accounts":
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔵 Facebook", callback_data="account:facebook")],
-            [InlineKeyboardButton(text="🔴 Google", callback_data="account:google")]
+            [InlineKeyboardButton(text="👤 Сетап КИНГ+\n10 авторегов", callback_data="acc:set1")],
+            [InlineKeyboardButton(text="👤 КИНГ + 1-3 БМ", callback_data="acc:set2")],
+            [InlineKeyboardButton(text="👤 Автореги", callback_data="acc:set3")]
         ])
         m1 = await query.message.answer("Выберите тип аккаунта:", reply_markup=kb)
         m2 = await query.message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
