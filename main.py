@@ -140,7 +140,7 @@ async def supply_category_selected(query: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="👤 КИНГ + 1-3 БМ", callback_data="acc:set2")],
             [InlineKeyboardButton(text="👤 Автореги", callback_data="acc:set3")]
         ])
-        m1 = await query.message.answer("Выберите тип аккаунта:", reply_markup=kb)
+        m1 = await query.message.answer("Выберите категорию (если нет в наличии, то будет добавлено то, что есть):", reply_markup=kb)
         m2 = await query.message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
         last_messages[query.from_user.id] = [m1.message_id, m2.message_id]
         await state.set_state(Form.choosing_account_type)
@@ -151,11 +151,11 @@ async def supply_category_selected(query: CallbackQuery, state: FSMContext):
     
     await query.answer()
 
-@router.callback_query(F.data.startswith("account:"), Form.choosing_account_type)
-async def account_type_selected(query: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("acc:"), Form.choosing_account_type)
+async def account_type_chosen(query: CallbackQuery, state: FSMContext):
     await delete_last_messages(query.from_user.id, query.message)
-    _, account_type = query.data.split(":")
-    await state.update_data(account_type=account_type)
+    _, acc_type = query.data.split(":")
+    await state.update_data(account_type=acc_type)
     
     msg = await query.message.answer("Введите количество аккаунтов:", reply_markup=cancel_kb)
     last_messages[query.from_user.id] = [msg.message_id]
