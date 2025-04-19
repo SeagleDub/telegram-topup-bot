@@ -180,8 +180,11 @@ async def get_account_quantity(message: Message, state: FSMContext):
     username = message.from_user.username or "нет username"
     data = await state.get_data()
     
-    account_type = data.get("account_type", "не указан")
-    account_type_text = "Facebook" if account_type == "facebook" else "Google"
+    account_type_text = {
+        "set1": "👤 Сетап КИНГ+10 авторегов",
+        "set2": "👤 КИНГ + 1-3 БМ",
+        "set3": "👤 Автореги"
+    }.get(data.get("account_type"), "👤 Неизвестно")
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}"),
