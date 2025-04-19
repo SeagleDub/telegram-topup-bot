@@ -1,0 +1,76 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment and config files
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+config.ini
+config.json
+*.config
+.python-version
+.envrc
+
+# Telegram bot specific
+token.txt
+bot_config.json
+session_files/
+downloads/
+uploads/
+logs/
+*.session
+*.session-journal
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.spyderproject
+.spyproject
+.ropeproject
+.history
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+log/
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Web-specific files if your bot has a web interface
+node_modules/
+.next/
+out/
+.vercel
