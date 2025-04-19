@@ -1,4 +1,3 @@
-
 import os
 import asyncio
 from aiogram import Bot, Dispatcher, Router, F
@@ -117,6 +116,151 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
     await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
     await query.answer()
+
+@router.message(F.text == "📂 Запросить расходники")
+async def request_supplies(message: Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Аккаунты", callback_data="supply:accounts")],
+        [InlineKeyboardButton(text="🌐 Домены", callback_data="supply:domains")]
+    ])
+    m1 = await message.answer("Выберите категорию расходников:", reply_markup=kb)
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.choosing_supply_category)
+
+@router.callback_query(F.data.startswith("supply:"), Form.choosing_supply_category)
+async def supply_category_selected(query: CallbackQuery, state: FSMContext):
+    await delete_last_messages(query.from_user.id, query.message)
+    _, category = query.data.split(":")
+    await state.update_data(category=category)
+    
+    if category == "accounts":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔵 Facebook", callback_data="account:facebook")],
+            [InlineKeyboardButton(text="🔴 Google", callback_data="account:google")]
+        ])
+        m1 = await query.message.answer("Выберите тип аккаунта:", reply_markup=kb)
+        m2 = await query.message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+        last_messages[query.from_user.id] = [m1.message_id, m2.message_id]
+        await state.set_state(Form.choosing_account_type)
+    elif category == "domains":
+        msg = await query.message.answer("Введите количество доменов:", reply_markup=cancel_kb)
+        last_messages[query.from_user.id] = [msg.message_id]
+        await state.set_state(Form.entering_domain_quantity)
+    
+    await query.answer()
+
+@router.callback_query(F.data.startswith("account:"), Form.choosing_account_type)
+async def account_type_selected(query: CallbackQuery, state: FSMContext):
+    await delete_last_messages(query.from_user.id, query.message)
+    _, account_type = query.data.split(":")
+    await state.update_data(account_type=account_type)
+    
+    msg = await query.message.answer("Введите количество аккаунтов:", reply_markup=cancel_kb)
+    last_messages[query.from_user.id] = [msg.message_id]
+    await state.set_state(Form.entering_account_quantity)
+    await query.answer()
+
+@router.message(Form.entering_account_quantity)
+async def get_account_quantity(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+    
+    quantity = message.text.strip()
+    if not quantity.isdigit():
+        await message.answer("Пожалуйста, введите корректное количество.")
+        return
+    
+    await delete_last_messages(message.from_user.id, message)
+    await state.update_data(quantity=quantity)
+    
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет username"
+    data = await state.get_data()
+    
+    account_type = data.get("account_type", "не указан")
+    account_type_text = "Facebook" if account_type == "facebook" else "Google"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}"),
+         InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
+    ])
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔔 Новый запрос на расходники от @{username} (ID: {user_id})\n"
+        f"📁 Тип: Аккаунты\n"
+        f"🔑 Платформа: {account_type_text}\n"
+        f"🔢 Количество: {quantity}",
+        reply_markup=kb
+    )
+    
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await state.clear()
+
+@router.message(Form.entering_domain_quantity)
+async def get_domain_quantity(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+    
+    quantity = message.text.strip()
+    if not quantity.isdigit():
+        await message.answer("Пожалуйста, введите корректное количество.")
+        return
+    
+    await delete_last_messages(message.from_user.id, message)
+    await state.update_data(quantity=quantity)
+    
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет username"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}"),
+         InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
+    ])
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔔 Новый запрос на расходники от @{username} (ID: {user_id})\n"
+        f"📁 Тип: Домены\n"
+        f"🔢 Количество: {quantity}",
+        reply_markup=kb
+    )
+    
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await state.clear()
+
+@router.callback_query(F.data.startswith("approve:"))
+async def approve_request(query: CallbackQuery):
+    _, user_id = query.data.split(":")
+    user_id = int(user_id)
+    
+    await bot.send_message(
+        user_id,
+        "✅ Ваша заявка одобрена и выполнена администратором."
+    )
+    
+    await query.message.edit_text(
+        f"{query.message.text}\n\n✅ ВЫПОЛНЕНО"
+    )
+    await query.answer("Пользователь уведомлен об одобрении")
+
+@router.callback_query(F.data.startswith("decline:"))
+async def decline_request(query: CallbackQuery):
+    _, user_id = query.data.split(":")
+    user_id = int(user_id)
+    
+    await bot.send_message(
+        user_id,
+        "❌ Ваша заявка отклонена администратором."
+    )
+    
+    await query.message.edit_text(
+        f"{query.message.text}\n\n❌ ОТКЛОНЕНО"
+    )
+    await query.answer("Пользователь уведомлен об отклонении")
 
 @router.message(F.text == "❌ Отмена")
 async def cancel_handler(message: Message, state: FSMContext):
