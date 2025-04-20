@@ -20,10 +20,13 @@ dp = Dispatcher(storage=storage)
 router = Router()
 dp.include_router(router)
 
-menu_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="💰 Заказать пополнение")],
-    [KeyboardButton(text="📂 Запросить расходники")]
-])
+def get_menu_kb(user_id: int) -> ReplyKeyboardMarkup | None:
+    if user_id == ADMIN_ID:
+        return None
+    return ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+        [KeyboardButton(text="💰 Заказать пополнение")],
+        [KeyboardButton(text="📂 Запросить расходники")]
+    ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
     [KeyboardButton(text="❌ Отмена")]
@@ -42,7 +45,11 @@ last_messages = {}
 
 @router.message(Command("start"))
 async def send_welcome(message: Message):
-    await message.answer("Выберите действие:", reply_markup=menu_kb)
+    keyboard = get_menu_kb(message.from_user.id)
+    if keyboard:
+        await message.answer("Выберите действие:", reply_markup=keyboard)
+    else:
+        await message.answer("Привет, админ!")
 
 @router.message(F.text == "💰 Заказать пополнение")
 async def order_topup(message: Message, state: FSMContext):
@@ -113,7 +120,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
         f"📌 Тип: {topup_type_text}",
         reply_markup=kb
     )
-    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=get_menu_kb(user_id))
     await state.clear()
     await query.answer()
 
@@ -200,7 +207,7 @@ async def get_account_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=)
     await state.clear()
 
 @router.message(Form.entering_domain_quantity)
@@ -233,7 +240,7 @@ async def get_domain_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=get_menu_kb(user_id))
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve:"))
@@ -270,7 +277,7 @@ async def decline_request(query: CallbackQuery):
 async def cancel_handler(message: Message, state: FSMContext):
     await delete_last_messages(message.from_user.id, message)
     await state.clear()
-    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb)
+    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_kb(message.from_user.id))
 
 async def delete_last_messages(user_id, current_message):
     ids = last_messages.get(user_id, [])
