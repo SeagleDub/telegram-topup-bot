@@ -126,11 +126,11 @@ async def upload_text(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
+    await message.answer("debug 0.")
     file = await message.document.download()
-    if not file:
-        await message.answer("Ошибка при скачивании файла.")
-        return
+    await message.answer("debug 1.")
     await state.update_data(text_file=file.name)
+    await message.answer("debug 2.")
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [msg.message_id]
