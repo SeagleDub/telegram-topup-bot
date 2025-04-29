@@ -22,7 +22,8 @@ dp.include_router(router)
 
 menu_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
-    [KeyboardButton(text="📂 Запросить расходники")]
+    [KeyboardButton(text="📂 Запросить расходники")],
+    [KeyboardButton(text="🌐 Создать/починить лендинг")]
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
@@ -37,12 +38,129 @@ class Form(StatesGroup):
     choosing_account_type = State()
     entering_account_quantity = State()
     entering_domain_quantity = State()
+    # landing functionality
+    choosing_offer_category = State()
+    writing_offer_name = State()
+    writing_specification = State()
+    uploading_text_file = State()
+    uploading_images = State()
 
 last_messages = {}
 
 @router.message(Command("start"))
 async def send_welcome(message: Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
+
+@router.message(F.text == "🌐 Создать лендинг")
+async def create_landing(message: Message, state: FSMContext):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💻 Создать лендинг", callback_data="landing:create")],
+        [InlineKeyboardButton(text="🔧 Починить лендинг", callback_data="landing:repair")]
+    ])
+    m1 = await message.answer("Выберите действие:", reply_markup=kb)
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.choosing_offer_category)
+
+@router.callback_query(F.data.startswith("landing:"), Form.choosing_offer_category)
+async def landing_category_selected(query: CallbackQuery, state: FSMContext):
+    await delete_last_messages(query.from_user.id, query.message)
+    _, category = query.data.split(":")
+
+    await state.update_data(landing_category=category)
+    msg = await query.message.answer("Введите название оффера:", reply_markup=cancel_kb)
+    last_messages[query.from_user.id] = [msg.message_id]
+    await state.set_state(Form.writing_offer_name)
+    await query.answer()
+
+@router.message(Form.writing_offer_name)
+async def write_specification(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    offer_name = message.text.strip()
+    await state.update_data(offer_name=offer_name)
+
+    msg = await message.answer("Введите ТЗ для лендинга:", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [msg.message_id]
+    await state.set_state(Form.writing_specification)
+
+
+@router.message(Form.writing_specification)
+async def upload_text_file(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    specification = message.text.strip()
+    await state.update_data(specification=specification)
+
+    # Попросим загрузить файлы
+    msg = await message.answer("Загрузите Excel файл с текстом сайта:", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [msg.message_id]
+    await state.set_state(Form.uploading_text_file)
+
+@router.message(Form.uploading_text_file, content_types=["document"])
+async def upload_images(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    # Проверяем, что это Excel файл
+    if message.document.mime_type not in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+        await message.answer("Пожалуйста, загрузите Excel файл.")
+        return
+
+    # Сохраняем файл
+    file = await message.document.download()
+    await state.update_data(text_file=file.name)
+
+    msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [msg.message_id]
+    await state.set_state(Form.uploading_images)
+
+@router.message(Form.uploading_images, content_types=["document"])
+async def upload_images(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    # Проверяем, что это zip файл
+    if message.document.mime_type != "application/zip":
+        await message.answer("Пожалуйста, загрузите ZIP архив с картинками.")
+        return
+
+    # Сохраняем файл
+    file = await message.document.download()
+    await state.update_data(images_file=file.name)
+
+    data = await state.get_data()
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет username"
+    offer_name = data.get("offer_name")
+    category = data.get("landing_category")
+    specification = data.get("specification")
+    text_file = data.get("text_file")
+    images_file = data.get("images_file")
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}")],
+        [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
+    ])
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"🔔 Новый запрос на создание лендинга от @{username} (ID: {user_id})\n"
+        f"📝 Оффер: {offer_name}\n"
+        f"🔧 Категория: {category}\n"
+        f"📝 ТЗ: {specification}\n"
+        f"📄 Текст: {text_file}\n"
+        f"🖼️ Картинки: {images_file}",
+        reply_markup=kb
+    )
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await state.clear()
 
 @router.message(F.text == "💰 Заказать пополнение")
 async def order_topup(message: Message, state: FSMContext):
