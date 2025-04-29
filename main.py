@@ -57,7 +57,7 @@ last_messages = {}
 async def send_welcome(message: Message):
     await message.answer("Выберите действие:", reply_markup=menu_kb)
 
-@router.message(F.text == "🌐 Создать лендинг")
+@router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💻 Создать лендинг", callback_data="landing:create")],
