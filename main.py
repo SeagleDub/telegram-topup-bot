@@ -107,12 +107,19 @@ async def upload_text_file(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.uploading_text_file)
 
-@router.message(Form.uploading_text_file, F.content_type == ContentType.DOCUMENT)
+
+@router.message(Form.uploading_text_file)
 async def upload_text(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    # Проверяем, не отмена ли это
+    if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
-
+        
+    # Проверяем, что это документ
+    if not message.document:
+        await message.answer("Пожалуйста, загрузите Excel файл.")
+        return
+        
     # Проверяем, что это Excel файл
     if message.document.mime_type not in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
         await message.answer("Пожалуйста, загрузите Excel файл.")
@@ -126,10 +133,16 @@ async def upload_text(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.uploading_images)
 
-@router.message(Form.uploading_images, F.content_type == ContentType.DOCUMENT)
+@router.message(Form.uploading_images)
 async def upload_images(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    # Проверяем, не отмена ли это
+    if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
+        return
+        
+    # Проверяем, что это документ
+    if not message.document:
+        await message.answer("Пожалуйста, загрузите ZIP архив с картинками.")
         return
 
     # Проверяем, что это zip файл
