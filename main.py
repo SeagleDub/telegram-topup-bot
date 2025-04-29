@@ -7,12 +7,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 import shortuuid
+import gspread
 from dotenv import load_dotenv
 import bugsnag
 
 load_dotenv()
 
 API_TOKEN = os.getenv("BOT_TOKEN")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 BUGSNAG_TOKEN = os.getenv("BUGSNAG_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
@@ -179,6 +181,11 @@ async def upload_images(message: Message, state: FSMContext):
         f"📝 ТЗ: {specification}\n",
         reply_markup=kb
     )
+    
+    gc = gspread.authorize(None)
+    spreadsheet = gc.open_by_key(GOOGLE_SHEET_ID)
+    worksheet = spreadsheet.sheet1
+    worksheet.append_row([order_id, username, user_id, offer_name, category, specification])
     
     await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
