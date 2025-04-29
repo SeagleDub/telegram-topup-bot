@@ -127,6 +127,9 @@ async def upload_text(message: Message, state: FSMContext):
 
     # Сохраняем файл
     file = await message.document.download()
+    if not file:
+        await message.answer("Ошибка при скачивании файла.")
+        return
     await state.update_data(text_file=file.name)
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
@@ -152,6 +155,9 @@ async def upload_images(message: Message, state: FSMContext):
 
     # Сохраняем файл
     file = await message.document.download()
+        if not file:
+        await message.answer("Ошибка при скачивании файла.")
+        return
     await state.update_data(images_file=file.name)
 
     data = await state.get_data()
