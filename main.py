@@ -183,7 +183,7 @@ async def upload_images(message: Message, state: FSMContext):
     )
     
     gc = gspread.service_account(filename='credentials.json')
-    table = gc.open_by_key(table_url)
+    table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.sheet1
     worksheet.append_row([order_id, username, user_id, offer_name, category, specification])
     
