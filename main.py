@@ -51,8 +51,8 @@ class Form(StatesGroup):
     choosing_offer_category = State()
     writing_offer_name = State()
     writing_specification = State()
-    uploading_text_file = State()
-    uploading_images = State()
+    uploading_excel_file = State()
+    uploading_zip_file = State()
 
 last_messages = {}
 
@@ -83,7 +83,7 @@ async def landing_category_selected(query: CallbackQuery, state: FSMContext):
     await query.answer()
 
 @router.message(Form.writing_offer_name)
-async def write_specification(message: Message, state: FSMContext):
+async def write_offer_name(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
@@ -95,9 +95,8 @@ async def write_specification(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.writing_specification)
 
-
 @router.message(Form.writing_specification)
-async def upload_text_file(message: Message, state: FSMContext):
+async def write_specification(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
@@ -105,14 +104,20 @@ async def upload_text_file(message: Message, state: FSMContext):
     specification = message.text.strip()
     await state.update_data(specification=specification)
 
-    # Попросим загрузить файлы
-    msg = await message.answer("Загрузите Excel файл с текстом сайта:", reply_markup=cancel_kb)
-    last_messages[message.from_user.id] = [msg.message_id]
-    await state.set_state(Form.uploading_text_file)
+    data = await state.get_data()
+    landing_category = data.get("landing_category")
 
+    if landing_category == "create":
+        msg = await message.answer("Загрузите Excel файл с текстом сайта:", reply_markup=cancel_kb)
+        last_messages[message.from_user.id] = [msg.message_id]
+        await state.set_state(Form.uploading_excel_file)
+    else:
+        msg = await message.answer("Загрузите ZIP архив с файлами лендинга:", reply_markup=cancel_kb)
+        last_messages[message.from_user.id] = [msg.message_id]
+        await state.set_state(Form.uploading_zip_file)
 
-@router.message(Form.uploading_text_file)
-async def upload_text(message: Message, state: FSMContext):
+@router.message(Form.uploading_excel_file)
+async def upload_excel_file(message: Message, state: FSMContext):
     # Проверяем, не отмена ли это
     if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
@@ -129,41 +134,43 @@ async def upload_text(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
-    await state.update_data(text_file=message.document.file_id)
+    await state.update_data(excel_file=message.document.file_id)
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [msg.message_id]
-    await state.set_state(Form.uploading_images)
+    await state.set_state(Form.uploading_zip_file)
 
-@router.message(Form.uploading_images)
-async def upload_images(message: Message, state: FSMContext):
+@router.message(Form.uploading_zip_file)
+async def upload_zip_file(message: Message, state: FSMContext):
     # Проверяем, не отмена ли это
     if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
         
+    data = await state.get_data()
+    landing_category = data.get("landing_category")
+        
+    text_message = "Пожалуйста, загрузите ZIP архив с картинками." if landing_category == "create" else "Пожалуйста, загрузите ZIP архив с лендингом."
+        
     # Проверяем, что это документ
     if not message.document:
-        await message.answer("Пожалуйста, загрузите ZIP архив с картинками.")
+        await message.answer(text_message)
         return
 
     # Проверяем, что это zip файл
     if message.document.mime_type != "application/zip":
-        await message.answer("Пожалуйста, загрузите ZIP архив с картинками.")
+        await message.answer(text_message)
         return
 
     # Сохраняем файл
-    await state.update_data(images_file=message.document.file_id)
+    await state.update_data(zip_file=message.document.file_id)
 
     data = await state.get_data()
     user_id = message.from_user.id
     username = message.from_user.username or "нет username"
     offer_name = data.get("offer_name")
-    raw_category = data.get("landing_category")
-    category = "Создать лендинг" if raw_category == "create" else "Починить лендинг" if raw_category == "repair" else "Неизвестно"
+    category = "Создать лендинг" if landing_category == "create" else "Починить лендинг" if landing_category == "repair" else "Неизвестно"
     specification = data.get("specification")
-    text_file = data.get("text_file")
-    images_file = data.get("images_file")
     order_id = shortuuid.uuid()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -171,8 +178,14 @@ async def upload_images(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
 
-    await bot.send_document(ADMIN_ID, document=text_file, caption="📄 Текст")
-    await bot.send_document(ADMIN_ID, document=images_file, caption="🖼️ Картинки")
+    if landing_category == "create":
+        excel_file = data.get("excel_file")
+        await bot.send_document(ADMIN_ID, document=excel_file, caption="📄 Текст")
+        
+    caption_text = "🖼️ Картинки" if landing_category == "create" else "📄 Лендинг"
+    zip_file = data.get("zip_file")
+    await bot.send_document(ADMIN_ID, document=zip_file, caption=caption_text)
+    
     await bot.send_message(
         ADMIN_ID,
         f"🆔 Заявка: {order_id}\n"
