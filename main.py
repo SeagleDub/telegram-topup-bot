@@ -108,7 +108,7 @@ async def upload_text_file(message: Message, state: FSMContext):
     await state.set_state(Form.uploading_text_file)
 
 @router.message(Form.uploading_text_file, F.content_type == ContentType.DOCUMENT)
-async def upload_images(message: Message, state: FSMContext):
+async def upload_text(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
