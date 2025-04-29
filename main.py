@@ -182,7 +182,7 @@ async def upload_images(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    gc  = gspread.service_account(filename='credentials.json')
+    gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(table_url)
     worksheet = table.sheet1
     worksheet.append_row([order_id, username, user_id, offer_name, category, specification])
