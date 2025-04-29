@@ -159,7 +159,8 @@ async def upload_images(message: Message, state: FSMContext):
     user_id = message.from_user.id
     username = message.from_user.username or "нет username"
     offer_name = data.get("offer_name")
-    category = data.get("landing_category")
+    raw_category = data.get("landing_category")
+    category = "Создать лендинг" if raw_category == "create" else "Починить лендинг" if raw_category == "repair" else "Неизвестно"
     specification = data.get("specification")
     text_file = data.get("text_file")
     images_file = data.get("images_file")
