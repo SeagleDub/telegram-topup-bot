@@ -2,7 +2,7 @@ import os
 import asyncio
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -107,7 +107,7 @@ async def upload_text_file(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.uploading_text_file)
 
-@router.message(Form.uploading_text_file, content_types=["document"])
+@router.message(Form.uploading_text_file, F.content_type == ContentType.DOCUMENT)
 async def upload_images(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
@@ -126,7 +126,7 @@ async def upload_images(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.uploading_images)
 
-@router.message(Form.uploading_images, content_types=["document"])
+@router.message(Form.uploading_images, F.content_type == ContentType.DOCUMENT)
 async def upload_images(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
