@@ -182,10 +182,10 @@ async def upload_images(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    gc = gspread.authorize(None)
-    gs = gc.open_by_key(GOOGLE_SHEET_ID)
-    worksheet1 = gs.worksheet('Sheet1')
-    worksheet1.append_row([order_id, username, user_id, offer_name, category, specification])
+    gc  = gspread.service_account(filename='credentials.json')
+    table = gc.open_by_key(table_url)
+    worksheet = table.sheet1
+    worksheet.append_row([order_id, username, user_id, offer_name, category, specification])
     
     await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
