@@ -126,10 +126,7 @@ async def upload_text(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
-    file_id = message.document.file_id
-    file = await bot.get_file(file_id)
-    file_path = file.file_path
-    await state.update_data(text_file=file_path)
+    await state.update_data(text_file=message.document.file_id)
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [msg.message_id]
@@ -153,10 +150,7 @@ async def upload_images(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
-    file_id = message.document.file_id
-    file = await bot.get_file(file_id)
-    file_path = file.file_path
-    await state.update_data(images_file=file_path)
+    await state.update_data(images_file=message.document.file_id)
 
     data = await state.get_data()
     user_id = message.from_user.id
@@ -172,16 +166,17 @@ async def upload_images(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
 
+    await bot.send_document(ADMIN_ID, document=text_file, caption="📄 Текст")
+    await bot.send_document(ADMIN_ID, document=images_file, caption="🖼️ Картинки")
     await bot.send_message(
         ADMIN_ID,
         f"🔔 Новый запрос на создание лендинга от @{username} (ID: {user_id})\n"
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
-        f"📝 ТЗ: {specification}\n"
-        f"📄 Текст: {text_file}\n"
-        f"🖼️ Картинки: {images_file}",
+        f"📝 ТЗ: {specification}\n",
         reply_markup=kb
     )
+    
     await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
 
