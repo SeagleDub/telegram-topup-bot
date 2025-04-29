@@ -7,11 +7,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+import bugsnag
 
 load_dotenv()
 
 API_TOKEN = os.getenv("BOT_TOKEN")
+BUGSNAG_TOKEN = os.getenv("BUGSNAG_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+
+bugsnag.configure(
+    api_key=BUGSNAG_TOKEN
+)
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
