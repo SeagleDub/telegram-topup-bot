@@ -6,6 +6,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+import uuid
 from dotenv import load_dotenv
 import bugsnag
 
@@ -160,6 +161,7 @@ async def upload_images(message: Message, state: FSMContext):
     specification = data.get("specification")
     text_file = data.get("text_file")
     images_file = data.get("images_file")
+    order_id = str(uuid.uuid4())[:8]  # короткий ID
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}")],
@@ -170,14 +172,15 @@ async def upload_images(message: Message, state: FSMContext):
     await bot.send_document(ADMIN_ID, document=images_file, caption="🖼️ Картинки")
     await bot.send_message(
         ADMIN_ID,
-        f"🔔 Новый запрос на создание лендинга от @{username} (ID: {user_id})\n"
+        f"🆔 Заявка: #{order_id}\n"
+        f"👤 От: @{username} (ID: {user_id})\n"
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
         f"📝 ТЗ: {specification}\n",
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
+    await message.answer(f"Ваша заявка #{order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
 
 @router.message(F.text == "💰 Заказать пополнение")
