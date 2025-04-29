@@ -126,11 +126,10 @@ async def upload_text(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
-    await message.answer("debug 0.")
-    file = await message.document.download()
-    await message.answer("debug 1.")
-    await state.update_data(text_file=file.name)
-    await message.answer("debug 2.")
+    file_id = message.document.file_id
+    file = await bot.get_file(file_id)
+    file_path = file.file_path
+    await state.update_data(text_file=file_path)
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [msg.message_id]
@@ -154,11 +153,10 @@ async def upload_images(message: Message, state: FSMContext):
         return
 
     # Сохраняем файл
-    file = await message.document.download()
-    if not file:
-        await message.answer("Ошибка при скачивании файла.")
-        return
-    await state.update_data(images_file=file.name)
+    file_id = message.document.file_id
+    file = await bot.get_file(file_id)
+    file_path = file.file_path
+    await state.update_data(images_file=file_path)
 
     data = await state.get_data()
     user_id = message.from_user.id
