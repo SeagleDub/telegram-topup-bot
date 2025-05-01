@@ -51,7 +51,7 @@ class Form(StatesGroup):
     choosing_offer_category = State()
     writing_offer_name = State()
     writing_specification = State()
-    uploading_excel_file = State()
+    entering_canvas_link = State()
     uploading_zip_file = State()
 
 last_messages = {}
@@ -108,33 +108,30 @@ async def write_specification(message: Message, state: FSMContext):
     landing_category = data.get("landing_category")
 
     if landing_category == "create":
-        msg = await message.answer("Загрузите Excel файл с текстом сайта:", reply_markup=cancel_kb)
+        msg = await message.answer("Введите ссылку на canvas из Chat GPT:", reply_markup=cancel_kb)
         last_messages[message.from_user.id] = [msg.message_id]
-        await state.set_state(Form.uploading_excel_file)
+        await state.set_state(Form.entering_canvas_link)
     else:
         msg = await message.answer("Загрузите ZIP архив с файлами лендинга:", reply_markup=cancel_kb)
         last_messages[message.from_user.id] = [msg.message_id]
         await state.set_state(Form.uploading_zip_file)
 
-@router.message(Form.uploading_excel_file)
-async def upload_excel_file(message: Message, state: FSMContext):
+VALID_LINK_REGEX = re.compile(r"^https:\/\/chatgpt\.com\/canvas\/shared\/[a-zA-Z0-9]+$")
+
+@router.message(Form.entering_canvas_link)
+async def enter_canvas_link(message: Message, state: FSMContext):
     # Проверяем, не отмена ли это
     if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
         
-    # Проверяем, что это документ
-    if not message.document:
-        await message.answer("Пожалуйста, загрузите Excel файл.")
-        return
-        
-    # Проверяем, что это Excel файл
-    if message.document.mime_type not in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
-        await message.answer("Пожалуйста, загрузите Excel файл.")
+   # Проверяем, что текст является корректной ссылкой
+    if not message.text or not VALID_LINK_REGEX.match(message.text.strip()):
+        await message.answer("Пожалуйста, отправьте корректную ссылку вида:\nhttps://chatgpt.com/canvas/shared/...")
         return
 
-    # Сохраняем файл
-    await state.update_data(excel_file=message.document.file_id)
+    # Сохраняем ссылку
+    await state.update_data(canvas_link=message.text.strip())
 
     msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [msg.message_id]
@@ -172,15 +169,12 @@ async def upload_zip_file(message: Message, state: FSMContext):
     category = "Создать лендинг" if landing_category == "create" else "Починить лендинг" if landing_category == "repair" else "Неизвестно"
     specification = data.get("specification")
     order_id = shortuuid.uuid()
+    canvas_link = data.get("canvas_link") if landing_category == "create" else None
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}")],
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
-
-    if landing_category == "create":
-        excel_file = data.get("excel_file")
-        await bot.send_document(ADMIN_ID, document=excel_file, caption="📄 Текст")
         
     caption_text = "🖼️ Картинки" if landing_category == "create" else "📄 Лендинг"
     zip_file = data.get("zip_file")
@@ -193,13 +187,14 @@ async def upload_zip_file(message: Message, state: FSMContext):
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
         f"📝 ТЗ: {specification}\n",
+        f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}",
         reply_markup=kb
     )
     
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.sheet1
-    worksheet.append_row([order_id, username, user_id, offer_name, category, specification])
+    worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link])
     
     await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
