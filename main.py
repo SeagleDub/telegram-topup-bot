@@ -10,6 +10,7 @@ import shortuuid
 import gspread
 from dotenv import load_dotenv
 import bugsnag
+import re
 
 load_dotenv()
 
