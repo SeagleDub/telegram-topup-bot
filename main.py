@@ -195,7 +195,7 @@ async def upload_zip_file(message: Message, state: FSMContext):
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.sheet1
-    worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link])
+    worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link if canvas_link else ''])
     
     await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
