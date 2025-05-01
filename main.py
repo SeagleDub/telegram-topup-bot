@@ -173,7 +173,7 @@ async def upload_zip_file(message: Message, state: FSMContext):
     canvas_link = data.get("canvas_link") if landing_category == "create" else None
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}")],
+        [InlineKeyboardButton(text="✅ Взять в работу", callback_data=f"processing:{user_id}")],
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
         
@@ -410,6 +410,21 @@ async def approve_request(query: CallbackQuery):
         f"{query.message.text}\n\n✅ ВЫПОЛНЕНО"
     )
     await query.answer("Пользователь уведомлен об одобрении")
+    
+@router.callback_query(F.data.startswith("processing:"))
+async def processing_request(query: CallbackQuery):
+    _, user_id = query.data.split(":")
+    user_id = int(user_id)
+    
+    await bot.send_message(
+        user_id,
+        "✅ Ваша заявка рассмотрена и взята в работу."
+    )
+    
+    await query.message.edit_text(
+        f"{query.message.text}\n\n✅ В РАБОТЕ"
+    )
+    await query.answer("Пользователь уведомлен о взятии в работу")
 
 @router.callback_query(F.data.startswith("decline:"))
 async def decline_request(query: CallbackQuery):
