@@ -176,23 +176,21 @@ async def upload_zip_file(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}")],
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
-        
+     
+    if landing_category == "create":
+        await bot.send_message(ADMIN_ID, f"🔗 Ссылка на Canvas: {canvas_link}")
+     
     caption_text = "🖼️ Картинки" if landing_category == "create" else "📄 Лендинг"
     zip_file = data.get("zip_file")
     await bot.send_document(ADMIN_ID, document=zip_file, caption=caption_text)
     
-    message_text = (
+    await bot.send_message(
+        ADMIN_ID,
         f"🆔 Заявка: {order_id}\n"
         f"👤 От: @{username} (ID: {user_id})\n"
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
-        f"📝 ТЗ: {specification}\n"
-        f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}"
-    )
-    
-    await bot.send_message(
-        ADMIN_ID,
-        message_text,
+        f"📝 ТЗ: {specification}\n",
         reply_markup=kb
     )
     
