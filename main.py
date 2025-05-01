@@ -181,21 +181,25 @@ async def upload_zip_file(message: Message, state: FSMContext):
     zip_file = data.get("zip_file")
     await bot.send_document(ADMIN_ID, document=zip_file, caption=caption_text)
     
-    await bot.send_message(
-        ADMIN_ID,
+    message_text = (
         f"🆔 Заявка: {order_id}\n"
         f"👤 От: @{username} (ID: {user_id})\n"
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
-        f"📝 ТЗ: {specification}\n",
-        f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}",
+        f"📝 ТЗ: {specification}\n"
+        f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}"
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        message_text,
         reply_markup=kb
     )
     
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.sheet1
-    worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link if canvas_link else ''])
+    worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link])
     
     await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
