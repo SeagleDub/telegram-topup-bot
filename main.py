@@ -96,39 +96,61 @@ async def write_offer_name(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [msg.message_id]
     await state.set_state(Form.writing_specification)
 
+ready_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="✅ Готово")],
+        [KeyboardButton(text="❌ Отмена")]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=False
+)
+
 @router.message(Form.writing_specification)
 async def write_specification(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
 
-    # Save text specification
-    specification = message.text.strip() if message.text else ""
-    await state.update_data(specification=specification)   
+    if message.text == "✅ Готово":
+        data = await state.get_data()
+        landing_category = data.get("landing_category")
 
-    # Save image file_ids if present
-    image_file_ids = []
-    document_file_ids = []
-    if message.photo:
-        largest_photo = message.photo[-1]
-        image_file_ids.append(largest_photo.file_id)
-    elif message.document:
-        document_file_ids.append(message.document.file_id)
-    
-    await state.update_data(spec_image_ids=image_file_ids)  
-    await state.update_data(spec_doc_ids=document_file_ids)      
+        if landing_category == "create":
+            msg = await message.answer("Введите ссылку на canvas из Chat GPT:", reply_markup=cancel_kb)
+            last_messages[message.from_user.id] = [msg.message_id]
+            await state.set_state(Form.entering_canvas_link)
+        else:
+            msg = await message.answer("Загрузите ZIP архив с файлами лендинга:", reply_markup=cancel_kb)
+            last_messages[message.from_user.id] = [msg.message_id]
+            await state.set_state(Form.uploading_zip_file)
+        return
 
     data = await state.get_data()
-    landing_category = data.get("landing_category")
+    spec_text = data.get("specification", "")
+    spec_image_ids = data.get("spec_image_ids", [])
+    spec_doc_ids = data.get("spec_doc_ids", [])
 
-    if landing_category == "create":
-        msg = await message.answer("Введите ссылку на canvas из Chat GPT:", reply_markup=cancel_kb)
-        last_messages[message.from_user.id] = [msg.message_id]
-        await state.set_state(Form.entering_canvas_link)
-    else:
-        msg = await message.answer("Загрузите ZIP архив с файлами лендинга:", reply_markup=cancel_kb)
-        last_messages[message.from_user.id] = [msg.message_id]
-        await state.set_state(Form.uploading_zip_file)
+    if message.text:
+        spec_text += ("\n" if spec_text else "") + message.text.strip()
+
+    if message.photo:
+        largest_photo = message.photo[-1]
+        spec_image_ids.append(largest_photo.file_id)
+
+    elif message.document:
+        spec_doc_ids.append(message.document.file_id)
+
+    await state.update_data(
+        specification=spec_text,
+        spec_image_ids=spec_image_ids,
+        spec_doc_ids=spec_doc_ids
+    )
+
+    await message.answer(
+        "✅ Добавлено. Можете отправить ещё текст или изображение.\nКогда всё готово — нажмите *Готово*",
+        reply_markup=ready_kb,
+        parse_mode="Markdown"
+    )
 
 VALID_LINK_REGEX = re.compile(r"^https:\/\/chatgpt\.com\/canvas\/shared\/[a-zA-Z0-9]+$")
 
