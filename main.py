@@ -108,14 +108,15 @@ async def write_specification(message: Message, state: FSMContext):
 
     # Save image file_ids if present
     image_file_ids = []
+    document_file_ids = []
     if message.photo:
         largest_photo = message.photo[-1]
         image_file_ids.append(largest_photo.file_id)
-    elif message.document and message.document.mime_type.startswith("image/"):
-        image_file_ids.append(message.document.file_id)
+    elif message.document:
+        document_file_ids.append(message.document.file_id)
     
-    # Store image file IDs in state
-    await state.update_data(spec_file_ids=image_file_ids)    
+    await state.update_data(spec_image_ids=image_file_ids)  
+    await state.update_data(spec_doc_ids=document_file_ids)      
 
     data = await state.get_data()
     landing_category = data.get("landing_category")
@@ -181,7 +182,8 @@ async def upload_zip_file(message: Message, state: FSMContext):
     offer_name = data.get("offer_name")
     category = "Создать лендинг" if landing_category == "create" else "Починить лендинг" if landing_category == "repair" else "Неизвестно"
     specification = data.get("specification")
-    spec_images = data.get("spec_file_ids", [])
+    spec_images = data.get("spec_image_ids", [])
+    spec_docs = data.get("spec_doc_ids", [])
     order_id = shortuuid.uuid()
     canvas_link = data.get("canvas_link") if landing_category == "create" else None
 
@@ -196,6 +198,8 @@ async def upload_zip_file(message: Message, state: FSMContext):
 
     for file_id in spec_images:
         await bot.send_photo(ADMIN_ID, file_id)
+    for file_id in spec_docs:
+        await bot.send_document(ADMIN_ID, file_id)
         
     message_text = (
         f"🆔 Заявка: {order_id}\n"
