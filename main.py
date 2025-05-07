@@ -237,7 +237,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     file_bytes = output.read()
 
     # Возвращаем InputFile с байтами данных
-    return InputFile(io.BytesIO(file_bytes), filename=f"processed_{file_id}.{img_format.lower()}")
+    return InputFile(file_bytes, filename=f"processed_{file_id}.{img_format.lower()}")
 
 async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     """Process a document assuming it's an image, return InputFile"""
@@ -279,7 +279,7 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     file_bytes = output.read()
 
     # Возвращаем InputFile с байтами данных
-    return InputFile(io.BytesIO(file_bytes), filename=unique_file_name)
+    return InputFile(file_bytes, filename=unique_file_name)
 
 
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
