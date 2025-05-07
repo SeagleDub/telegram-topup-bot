@@ -23,7 +23,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import shortuuid
 import gspread
 import re
-from PIL import Image, ImageFilter, ImageEnhance, PngInfo, TiffImagePlugin
+from PIL import Image, ImageFilter, ImageEnhance
+from PIL.PngImagePlugin import PngInfo
+from PIL import TiffImagePlugin
 from typing import Union, Tuple, Optional, Dict, Any
 import io
 import random
@@ -273,116 +275,88 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
     """Apply random subtle filter and change metadata"""
     img = Image.open(io.BytesIO(file_content))
     img_format = img.format or "JPEG"
-    
-    # Convert to RGB if needed (for some filters)
+
     if img.mode == 'P':
         img = img.convert('RGBA' if 'transparency' in img.info else 'RGB')
-    
-    # Apply random subtle filter (around 1%)
+
+    # Apply a subtle random transformation
     filter_type = random.choice(['brightness', 'contrast', 'color', 'sharpness', 'blur', 'noise', 'rotate'])
-    
+
     if filter_type == 'brightness':
-        factor = random.uniform(0.99, 1.01)  # ±1% brightness
-        img = ImageEnhance.Brightness(img).enhance(factor)
+        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.99, 1.01))
     elif filter_type == 'contrast':
-        factor = random.uniform(0.99, 1.01)  # ±1% contrast
-        img = ImageEnhance.Contrast(img).enhance(factor)
-    elif filter_type == 'color':
-        if img.mode in ('RGB', 'RGBA'):
-            factor = random.uniform(0.99, 1.01)  # ±1% color
-            img = ImageEnhance.Color(img).enhance(factor)
+        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.99, 1.01))
+    elif filter_type == 'color' and img.mode in ('RGB', 'RGBA'):
+        img = ImageEnhance.Color(img).enhance(random.uniform(0.99, 1.01))
     elif filter_type == 'sharpness':
-        factor = random.uniform(0.99, 1.01)  # ±1% sharpness
-        img = ImageEnhance.Sharpness(img).enhance(factor)
+        img = ImageEnhance.Sharpness(img).enhance(random.uniform(0.99, 1.01))
     elif filter_type == 'blur':
-        # Extremely slight blur
         img = img.filter(ImageFilter.GaussianBlur(radius=0.1))
-    elif filter_type == 'noise':
-        # Add extremely slight noise to one pixel
-        if img.mode in ('RGB', 'RGBA'):
-            for _ in range(3):  # Add noise to 3 random pixels
-                x = random.randint(0, img.width - 1)
-                y = random.randint(0, img.height - 1)
-                current_pixel = list(img.getpixel((x, y)))
-                
-                # Change each channel by a tiny amount
-                for i in range(min(3, len(current_pixel))):
-                    current_pixel[i] = max(0, min(255, current_pixel[i] + random.randint(-1, 1)))
-                
-                img.putpixel((x, y), tuple(current_pixel))
+    elif filter_type == 'noise' and img.mode in ('RGB', 'RGBA'):
+        for _ in range(3):
+            x, y = random.randint(0, img.width - 1), random.randint(0, img.height - 1)
+            px = list(img.getpixel((x, y)))
+            for i in range(min(3, len(px))):
+                px[i] = max(0, min(255, px[i] + random.randint(-1, 1)))
+            img.putpixel((x, y), tuple(px))
     elif filter_type == 'rotate':
-        # Rotate by a tiny amount (±0.1 degrees)
-        angle = random.uniform(-0.1, 0.1)
-        img = img.rotate(angle, resample=Image.BICUBIC, expand=False)
-    
-    # Modify one random pixel slightly (additional to any filter)
+        img = img.rotate(random.uniform(-0.1, 0.1), resample=Image.BICUBIC, expand=False)
+
+    # Minor pixel edit
     if img.mode in ('RGB', 'RGBA'):
-        x = random.randint(0, img.width - 1)
-        y = random.randint(0, img.height - 1)
-        current_pixel = list(img.getpixel((x, y)))
-        
-        # Change one channel by 1
-        channel = random.randint(0, min(3, len(current_pixel)) - 1)
-        current_pixel[channel] = max(0, min(255, current_pixel[channel] + random.choice([-1, 1])))
-        
-        img.putpixel((x, y), tuple(current_pixel))
-    
-    # Generate a unique identifier for this image
+        x, y = random.randint(0, img.width - 1), random.randint(0, img.height - 1)
+        px = list(img.getpixel((x, y)))
+        i = random.randint(0, min(3, len(px)) - 1)
+        px[i] = max(0, min(255, px[i] + random.choice([-1, 1])))
+        img.putpixel((x, y), tuple(px))
+
     unique_id = uuid.uuid4().hex
     current_time = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
-    
-    # Change metadata based on image format
+
+    # === Metadata handling by format ===
     if img_format.upper() in ('JPEG', 'JPG'):
         try:
-            # Create completely new EXIF data
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-            
-            # Standard EXIF tags
-            exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1, 9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Model] = f"Model{random.randint(1, 9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Software] = f"Software{random.randint(1, 9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Artist] = f"Artist{random.randint(1, 999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Copyright] = f"Copyright{random.randint(1, 999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.ImageDescription] = f"Image{random.randint(1, 9999)}".encode()
-            
-            # Exif metadata
+            exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1,9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Model] = f"Model{random.randint(1,9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Software] = f"Software{random.randint(1,9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Artist] = f"Artist{random.randint(1,999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Copyright] = f"Copyright{random.randint(1,999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.ImageDescription] = f"Image{random.randint(1,9999)}".encode()
             exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = current_time.encode()
             exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = current_time.encode()
             exif_dict["Exif"][piexif.ExifIFD.ExifVersion] = b"0230"
-            exif_dict["Exif"][piexif.ExifIFD.LensMake] = f"Lens{random.randint(1, 999)}".encode()
-            exif_dict["Exif"][piexif.ExifIFD.LensModel] = f"LensModel{random.randint(1, 999)}".encode()
+            exif_dict["Exif"][piexif.ExifIFD.LensMake] = f"Lens{random.randint(1,999)}".encode()
+            exif_dict["Exif"][piexif.ExifIFD.LensModel] = f"LensModel{random.randint(1,999)}".encode()
             exif_dict["Exif"][piexif.ExifIFD.UserComment] = f"UniqueID:{unique_id}".encode()
-            
-            # GPS metadata (random but valid coordinates)
-            lat = random.uniform(-90, 90)
-            lon = random.uniform(-180, 180)
-            lat_ref = "N" if lat >= 0 else "S"
-            lon_ref = "E" if lon >= 0 else "W"
-            lat = abs(lat)
-            lon = abs(lon)
-            
+
+            lat = abs(random.uniform(-90, 90))
+            lon = abs(random.uniform(-180, 180))
+            lat_ref = 'N' if lat >= 0 else 'S'
+            lon_ref = 'E' if lon >= 0 else 'W'
+
+            def to_deg_tuple(val):
+                deg = int(val)
+                min_ = int((val - deg) * 60)
+                sec = int((((val - deg) * 60) - min_) * 60)
+                return ((deg, 1), (min_, 1), (sec, 1))
+
             exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref.encode()
-            exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = ((int(lat), 1), (int((lat % 1) * 60), 1), (int(((lat % 1) * 60) % 1 * 60), 1))
+            exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = to_deg_tuple(lat)
             exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref.encode()
-            exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = ((int(lon), 1), (int((lon % 1) * 60), 1), (int(((lon % 1) * 60) % 1 * 60), 1))
+            exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = to_deg_tuple(lon)
             exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = datetime.now().strftime("%Y:%m:%d").encode()
-            
-            # Convert to bytes
+
             exif_bytes = piexif.dump(exif_dict)
-            
-            # Create a new image with exif data
             with io.BytesIO() as output:
                 img.save(output, format=img_format, exif=exif_bytes, quality=95)
                 output.seek(0)
                 img = Image.open(output)
         except Exception as e:
             print(f"Error setting EXIF data: {e}")
-    
+
     elif img_format.upper() == 'PNG':
-        # For PNG files, add metadata in the form of text chunks
         metadata = PngInfo()
-        
-        # Add standard metadata
         metadata.add_text("Software", f"Editor{random.randint(1, 9999)}")
         metadata.add_text("Creation Time", current_time)
         metadata.add_text("UniqueID", unique_id)
@@ -393,47 +367,29 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
         metadata.add_text("Disclaimer", f"Generated image {random.randint(1, 9999)}")
         metadata.add_text("Source", f"Source{random.randint(1, 999)}")
         metadata.add_text("Title", f"Title{random.randint(1, 999)}")
-        
-        # Save with metadata
         with io.BytesIO() as output:
             img.save(output, format="PNG", pnginfo=metadata)
             output.seek(0)
             img = Image.open(output)
-    
+
     elif img_format.upper() == 'TIFF':
-        # For TIFF files, modify tags
         try:
-            # Create a temporary file with tags
             with io.BytesIO() as output:
-                tags = {
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x010e]: f"Image {random.randint(1000, 9999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x010f]: f"Camera{random.randint(1, 9999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x0110]: f"Model{random.randint(1, 9999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x0131]: f"Software{random.randint(1, 9999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x013b]: f"Artist{random.randint(1, 999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x8298]: f"Copyright{random.randint(1, 999)}",
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9003]: current_time,
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9004]: current_time,
-                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9286]: f"UniqueID:{unique_id}",
-                }
-                img.save(output, format="TIFF", tiffinfo=tags)
+                img.save(output, format="TIFF", description=f"Image {random.randint(1000, 9999)}")
                 output.seek(0)
                 img = Image.open(output)
         except Exception as e:
             print(f"Error setting TIFF tags: {e}")
-    
+
     elif img_format.upper() == 'WEBP':
-        # WEBP supports metadata through EXIF
         try:
             with io.BytesIO() as output:
-                img.save(output, format="WEBP", exif=f"UniqueID:{unique_id}")
+                img.save(output, format="WEBP", exif=b"UniqueID:" + unique_id.encode())
                 output.seek(0)
                 img = Image.open(output)
         except Exception as e:
             print(f"Error setting WEBP metadata: {e}")
-    
-    # For formats that don't support metadata, we only rely on pixel modifications
-    
+
     return img, img_format
 
 @router.message(Form.writing_specification)
