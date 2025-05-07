@@ -273,10 +273,14 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputF
 
     return InputFile(output, filename=unique_file_name), unique_file_name
 
-
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
     """Apply random subtle filter and change metadata"""
-    img = Image.open(io.BytesIO(file_content))
+    # Если file_content уже BytesIO, используем его напрямую, иначе оборачиваем в BytesIO
+    if isinstance(file_content, io.BytesIO):
+        img = Image.open(file_content)
+    else:
+        img = Image.open(io.BytesIO(file_content))
+        
     img_format = img.format or "JPEG"
 
     if img.mode == 'P':
