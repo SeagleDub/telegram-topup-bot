@@ -211,42 +211,10 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
 
-    # Open and ensure image is in a mutable mode
-    img = Image.open(io.BytesIO(file_content))
+    # Обработка изображения
+    img_processed, img_format = modify_image(file_content)
 
-    # Ensure the image is in a mode that can be edited (RGB, RGBA, etc.)
-    if img.mode == 'P':
-        img = img.convert('RGBA' if 'transparency' in img.info else 'RGB')
-
-    # Apply transformations and modifications
-    img_format = img.format or "JPEG"
-
-    # Apply random filter
-    filter_type = random.choice(['brightness', 'contrast', 'color', 'sharpness', 'blur', 'noise', 'rotate'])
-    if filter_type == 'brightness':
-        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.99, 1.01))
-    elif filter_type == 'contrast':
-        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.99, 1.01))
-    elif filter_type == 'color' and img.mode in ('RGB', 'RGBA'):
-        img = ImageEnhance.Color(img).enhance(random.uniform(0.99, 1.01))
-    elif filter_type == 'sharpness':
-        img = ImageEnhance.Sharpness(img).enhance(random.uniform(0.99, 1.01))
-    elif filter_type == 'blur':
-        img = img.filter(ImageFilter.GaussianBlur(radius=0.1))
-    elif filter_type == 'noise' and img.mode in ('RGB', 'RGBA'):
-        for _ in range(3):
-            x, y = random.randint(0, img.width - 1), random.randint(0, img.height - 1)
-            px = list(img.getpixel((x, y)))
-            for i in range(min(3, len(px))):
-                px[i] = max(0, min(255, px[i] + random.randint(-1, 1)))
-            img.putpixel((x, y), tuple(px))
-    elif filter_type == 'rotate':
-        img = img.rotate(random.uniform(-0.1, 0.1), resample=Image.BICUBIC, expand=False)
-
-    # Ensure the image is mutable
-    img.load()
-
-    # Saving image to output buffer
+    # Сохранение изображения в память
     output = BytesIO()
     save_params = {}
 
@@ -262,9 +230,9 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     elif img_format.upper() == 'TIFF':
         save_params['compression'] = 'tiff_lzw'
 
-    # Save the image
-    img.save(output, format=img_format, **save_params)
-    output.seek(0)  # Reset the pointer to the start of the file
+    # Сохраняем изображение в объект output
+    img_processed.save(output, format=img_format, **save_params)
+    output.seek(0)  # Перемещаем указатель в начало потока
 
     return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
 
@@ -306,15 +274,45 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputF
 
     return InputFile(output, filename=unique_file_name), unique_file_name
 
+async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
+    """Process a photo: apply random filter and change metadata, return InputFile"""
+    file = await bot.get_file(file_id)
+    file_content = await bot.download_file(file.file_path)
+
+    # Обработка изображения
+    img_processed, img_format = modify_image(file_content)
+
+    # Сохранение изображения в память
+    output = BytesIO()
+    save_params = {}
+
+    if img_format.upper() in ('JPEG', 'JPG'):
+        save_params['quality'] = random.randint(92, 98)
+        save_params['optimize'] = True
+    elif img_format.upper() == 'PNG':
+        save_params['optimize'] = True
+        save_params['compress_level'] = random.randint(6, 9)
+    elif img_format.upper() == 'WEBP':
+        save_params['quality'] = random.randint(92, 98)
+        save_params['method'] = 6
+    elif img_format.upper() == 'TIFF':
+        save_params['compression'] = 'tiff_lzw'
+
+    # Сохраняем изображение в объект output
+    img_processed.save(output, format=img_format, **save_params)
+    output.seek(0)  # Перемещаем указатель в начало потока
+
+    return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
+
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
-    """Apply random subtle filter and change metadata"""
-    # Если file_content уже BytesIO, используем его напрямую, иначе оборачиваем в BytesIO
-    if isinstance(file_content, io.BytesIO):
-        img = Image.open(file_content)
-    else:
-        img = Image.open(io.BytesIO(file_content))
-        
+    """Apply random filter and change metadata"""
+    # Открываем изображение из байтов
+    input_buffer = io.BytesIO(file_content)
+    img = Image.open(input_buffer)
     img_format = img.format or "JPEG"
+    
+    # Make a copy of the image to ensure it's writable
+    img = img.copy()
 
     if img.mode == 'P':
         img = img.convert('RGBA' if 'transparency' in img.info else 'RGB')
@@ -353,7 +351,7 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
     unique_id = uuid.uuid4().hex
     current_time = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
 
-    # === Metadata handling by format ===
+    # === Prepare metadata based on format ===
     if img_format.upper() in ('JPEG', 'JPG'):
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
         exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1,9999)}".encode()
@@ -386,13 +384,12 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
         exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = to_deg_tuple(lon)
         exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = datetime.now().strftime("%Y:%m:%d").encode()
 
+        # Apply EXIF data directly during the return instead of reopening the image
         exif_bytes = piexif.dump(exif_dict)
-        with io.BytesIO() as output:
-            img.save(output, format=img_format, exif=exif_bytes, quality=95)
-            output.seek(0)
-            img = Image.open(output)
-
+        img._exif = exif_bytes  # Store the EXIF data to be used during save()
+        
     elif img_format.upper() == 'PNG':
+        # Create PNG metadata to be used during save()
         metadata = PngInfo()
         metadata.add_text("Software", f"Editor{random.randint(1, 9999)}")
         metadata.add_text("Creation Time", current_time)
@@ -404,23 +401,10 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
         metadata.add_text("Disclaimer", f"Generated image {random.randint(1, 9999)}")
         metadata.add_text("Source", f"Source{random.randint(1, 999)}")
         metadata.add_text("Title", f"Title{random.randint(1, 999)}")
-        with io.BytesIO() as output:
-            img.save(output, format="PNG", pnginfo=metadata)
-            output.seek(0)
-            img = Image.open(output)
+        img._png_info = metadata  # Store PNG info to be used during save()
 
-    elif img_format.upper() == 'TIFF':
-        with io.BytesIO() as output:
-            img.save(output, format="TIFF", description=f"Image {random.randint(1000, 9999)}")
-            output.seek(0)
-            img = Image.open(output)
-
-    elif img_format.upper() == 'WEBP':
-        with io.BytesIO() as output:
-            img.save(output, format="WEBP", exif=b"UniqueID:" + unique_id.encode())
-            output.seek(0)
-            img = Image.open(output)
-
+    # No need to save and reopen the image here - we'll return the processed image
+    # and its format, and let the caller save it with the appropriate parameters
     return img, img_format
 
 @router.message(Form.writing_specification)
