@@ -243,33 +243,30 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[bytes,
     else:
         unique_file_name = f"{file_name}_{timestamp}"
     
-    try:
-        # Try to process as image
-        img_processed, img_format = modify_image(file_content)
+    # Try to process as image
+    img_processed, img_format = modify_image(file_content)
+    
+    # Prepare processed document for sending
+    with io.BytesIO() as output:
+        save_params = {}
         
-        # Prepare processed document for sending
-        with io.BytesIO() as output:
-            save_params = {}
+        # Format-specific saving parameters
+        if img_format.upper() in ('JPEG', 'JPG'):
+            save_params['quality'] = random.randint(92, 98)  # Slightly random quality
+            save_params['optimize'] = True
+        elif img_format.upper() == 'PNG':
+            save_params['optimize'] = True
+            save_params['compress_level'] = random.randint(6, 9)
+        elif img_format.upper() == 'WEBP':
+            save_params['quality'] = random.randint(92, 98)
+            save_params['method'] = 6  # Higher quality
+        elif img_format.upper() == 'TIFF':
+            save_params['compression'] = 'tiff_lzw'  # Lossless compression
             
-            # Format-specific saving parameters
-            if img_format.upper() in ('JPEG', 'JPG'):
-                save_params['quality'] = random.randint(92, 98)  # Slightly random quality
-                save_params['optimize'] = True
-            elif img_format.upper() == 'PNG':
-                save_params['optimize'] = True
-                save_params['compress_level'] = random.randint(6, 9)
-            elif img_format.upper() == 'WEBP':
-                save_params['quality'] = random.randint(92, 98)
-                save_params['method'] = 6  # Higher quality
-            elif img_format.upper() == 'TIFF':
-                save_params['compression'] = 'tiff_lzw'  # Lossless compression
-                
-            img_processed.save(output, format=img_format, **save_params)
-            output.seek(0)
-            return (output.getvalue(), unique_file_name)
-    except Exception as e:
-        print(f"Error processing document: {e}")
-        return (file_content, unique_file_name)
+        img_processed.save(output, format=img_format, **save_params)
+        output.seek(0)
+        return (output.getvalue(), unique_file_name)
+
 
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
     """Apply random subtle filter and change metadata"""
@@ -315,45 +312,42 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
 
     # === Metadata handling by format ===
     if img_format.upper() in ('JPEG', 'JPG'):
-        try:
-            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
-            exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1,9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Model] = f"Model{random.randint(1,9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Software] = f"Software{random.randint(1,9999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Artist] = f"Artist{random.randint(1,999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.Copyright] = f"Copyright{random.randint(1,999)}".encode()
-            exif_dict["0th"][piexif.ImageIFD.ImageDescription] = f"Image{random.randint(1,9999)}".encode()
-            exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = current_time.encode()
-            exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = current_time.encode()
-            exif_dict["Exif"][piexif.ExifIFD.ExifVersion] = b"0230"
-            exif_dict["Exif"][piexif.ExifIFD.LensMake] = f"Lens{random.randint(1,999)}".encode()
-            exif_dict["Exif"][piexif.ExifIFD.LensModel] = f"LensModel{random.randint(1,999)}".encode()
-            exif_dict["Exif"][piexif.ExifIFD.UserComment] = f"UniqueID:{unique_id}".encode()
+        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+        exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1,9999)}".encode()
+        exif_dict["0th"][piexif.ImageIFD.Model] = f"Model{random.randint(1,9999)}".encode()
+        exif_dict["0th"][piexif.ImageIFD.Software] = f"Software{random.randint(1,9999)}".encode()
+        exif_dict["0th"][piexif.ImageIFD.Artist] = f"Artist{random.randint(1,999)}".encode()
+        exif_dict["0th"][piexif.ImageIFD.Copyright] = f"Copyright{random.randint(1,999)}".encode()
+        exif_dict["0th"][piexif.ImageIFD.ImageDescription] = f"Image{random.randint(1,9999)}".encode()
+        exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = current_time.encode()
+        exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = current_time.encode()
+        exif_dict["Exif"][piexif.ExifIFD.ExifVersion] = b"0230"
+        exif_dict["Exif"][piexif.ExifIFD.LensMake] = f"Lens{random.randint(1,999)}".encode()
+        exif_dict["Exif"][piexif.ExifIFD.LensModel] = f"LensModel{random.randint(1,999)}".encode()
+        exif_dict["Exif"][piexif.ExifIFD.UserComment] = f"UniqueID:{unique_id}".encode()
 
-            lat = abs(random.uniform(-90, 90))
-            lon = abs(random.uniform(-180, 180))
-            lat_ref = 'N' if lat >= 0 else 'S'
-            lon_ref = 'E' if lon >= 0 else 'W'
+        lat = abs(random.uniform(-90, 90))
+        lon = abs(random.uniform(-180, 180))
+        lat_ref = 'N' if lat >= 0 else 'S'
+        lon_ref = 'E' if lon >= 0 else 'W'
 
-            def to_deg_tuple(val):
-                deg = int(val)
-                min_ = int((val - deg) * 60)
-                sec = int((((val - deg) * 60) - min_) * 60)
-                return ((deg, 1), (min_, 1), (sec, 1))
+        def to_deg_tuple(val):
+            deg = int(val)
+            min_ = int((val - deg) * 60)
+            sec = int((((val - deg) * 60) - min_) * 60)
+            return ((deg, 1), (min_, 1), (sec, 1))
 
-            exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref.encode()
-            exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = to_deg_tuple(lat)
-            exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref.encode()
-            exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = to_deg_tuple(lon)
-            exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = datetime.now().strftime("%Y:%m:%d").encode()
+        exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref.encode()
+        exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = to_deg_tuple(lat)
+        exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref.encode()
+        exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = to_deg_tuple(lon)
+        exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = datetime.now().strftime("%Y:%m:%d").encode()
 
-            exif_bytes = piexif.dump(exif_dict)
-            with io.BytesIO() as output:
-                img.save(output, format=img_format, exif=exif_bytes, quality=95)
-                output.seek(0)
-                img = Image.open(output)
-        except Exception as e:
-            print(f"Error setting EXIF data: {e}")
+        exif_bytes = piexif.dump(exif_dict)
+        with io.BytesIO() as output:
+            img.save(output, format=img_format, exif=exif_bytes, quality=95)
+            output.seek(0)
+            img = Image.open(output)
 
     elif img_format.upper() == 'PNG':
         metadata = PngInfo()
@@ -373,22 +367,16 @@ def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
             img = Image.open(output)
 
     elif img_format.upper() == 'TIFF':
-        try:
-            with io.BytesIO() as output:
-                img.save(output, format="TIFF", description=f"Image {random.randint(1000, 9999)}")
-                output.seek(0)
-                img = Image.open(output)
-        except Exception as e:
-            print(f"Error setting TIFF tags: {e}")
+        with io.BytesIO() as output:
+            img.save(output, format="TIFF", description=f"Image {random.randint(1000, 9999)}")
+            output.seek(0)
+            img = Image.open(output)
 
     elif img_format.upper() == 'WEBP':
-        try:
-            with io.BytesIO() as output:
-                img.save(output, format="WEBP", exif=b"UniqueID:" + unique_id.encode())
-                output.seek(0)
-                img = Image.open(output)
-        except Exception as e:
-            print(f"Error setting WEBP metadata: {e}")
+        with io.BytesIO() as output:
+            img.save(output, format="WEBP", exif=b"UniqueID:" + unique_id.encode())
+            output.seek(0)
+            img = Image.open(output)
 
     return img, img_format
 
