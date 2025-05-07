@@ -181,7 +181,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
     name_parts = file_name.rsplit('.', 1)
     ext = name_parts[1] if len(name_parts) > 1 else 'jpg'
 
-   zip_buffer = BytesIO()
+    zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for i in range(copies):
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
