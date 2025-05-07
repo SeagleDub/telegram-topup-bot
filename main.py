@@ -304,11 +304,10 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
 
     return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
 
-def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
+def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     """Apply random filter and change metadata"""
-    # Открываем изображение из байтов
-    input_buffer = io.BytesIO(file_content)
-    img = Image.open(input_buffer)
+    file_content.seek(0)
+    img = Image.open(file_content)
     img_format = img.format or "JPEG"
     
     # Make a copy of the image to ensure it's writable
