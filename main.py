@@ -148,13 +148,13 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
         try:
             # Process images and send back to user
             for file_id in uniq_image_ids:
-                processed_file, file_name = await process_image(bot, file_id, message.chat.id)
-                await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
+                processed_file = await process_image(bot, file_id, message.chat.id)
+                await bot.send_document(ADMIN_ID, document=processed_file)
                 
             # Process documents and send back to user
             for file_id in uniq_doc_ids:
-                processed_file, file_name = await process_image(bot, file_id, message.chat.id)
-                await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
+                processed_file = await process_image(bot, file_id, message.chat.id)
+                await bot.send_document(ADMIN_ID, document=processed_file)
         except Exception as e:
             bugsnag.notify(e)
             await message.answer(f"❌ Ошибка при отправке фото: {e}")
@@ -206,7 +206,7 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
             reply_markup=ready_kb
         )
 
-async def process_image(bot: Bot, file_id: str, user_id: int) -> Tuple[BufferedInputFile, str]:
+async def process_image(bot: Bot, file_id: str, user_id: int) -> BufferedInputFile:
     """Process a document assuming it's an image, return BufferedInputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
@@ -242,7 +242,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> Tuple[BufferedI
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    return BufferedInputFile(output.read(), filename=unique_file_name), unique_file_name
+    return BufferedInputFile(output.read(), filename=unique_file_name)
 
 def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     """Apply random filter and change metadata"""
