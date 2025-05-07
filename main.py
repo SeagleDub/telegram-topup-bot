@@ -16,7 +16,7 @@ bugsnag.configure(
 import asyncio
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType, InputFile
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -234,7 +234,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
+    return BufferedInputFile(output.read(), filename=f"processed_{file_id}.{img_format.lower()}")
 
 async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputFile, str]:
     """Process a document assuming it's an image, return InputFile"""
@@ -272,7 +272,7 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputF
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    return InputFile(output, filename=unique_file_name), unique_file_name
+    return BufferedInputFile(output.read(), filename=unique_file_name), unique_file_name
 
 async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     """Process a photo: apply random filter and change metadata, return InputFile"""
