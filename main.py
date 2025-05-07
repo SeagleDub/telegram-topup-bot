@@ -138,10 +138,10 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
     if message.text == "✅ Готово":
         if not uniq_image_ids and not uniq_doc_ids:
             await message.answer("У вас нет изображений для обработки. Пожалуйста, загрузите хотя бы одно изображение.", 
-                                reply_markup=menu_kb)
+                                reply_markup=ready_kb)
             return
             
-        await message.answer(f"Подождите, пока изображения обработаются.", reply_markup=menu_kb)
+        await message.answer(f"Подождите, пока изображения обработаются.", reply_markup=cancel_kb)
         
         # Process images and send back to user
         for file_id in uniq_image_ids:
