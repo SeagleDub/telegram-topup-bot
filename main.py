@@ -32,6 +32,7 @@ from io import BytesIO
 import random
 import piexif
 from datetime import datetime
+import uuid
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
