@@ -28,6 +28,7 @@ from PIL.PngImagePlugin import PngInfo
 from PIL import TiffImagePlugin
 from typing import Union, Tuple, Optional, Dict, Any
 import io
+from io import BytesIO
 import random
 import piexif
 from datetime import datetime
@@ -154,6 +155,7 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
                 processed_file, file_name = await process_document(bot, file_id, message.chat.id)
                 await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
         except Exception as e:
+            bugsnag.notify(e)
             await message.answer(f"❌ Ошибка при отправке фото: {e}")
             
         await message.answer(f"Процесс уникализации завершен. Всего уникализировано: {len(uniq_image_ids) + len(uniq_doc_ids)} изображений.", 
@@ -212,7 +214,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     img_processed, img_format = modify_image(file_content)
 
     # Сохранение изображения в память
-    output = io.BytesIO()
+    output = BytesIO()
     save_params = {}
 
     if img_format.upper() in ('JPEG', 'JPG'):
@@ -227,11 +229,15 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     elif img_format.upper() == 'TIFF':
         save_params['compression'] = 'tiff_lzw'
 
+    # Сохраняем изображение в объект output
     img_processed.save(output, format=img_format, **save_params)
-    output.seek(0)
+    output.seek(0)  # Перемещаем указатель в начало потока
 
-    # Вернуть InputFile с указанием имени
-    return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
+    # Получаем байтовые данные
+    file_bytes = output.read()
+
+    # Возвращаем InputFile с байтами данных
+    return InputFile(io.BytesIO(file_bytes), filename=f"processed_{file_id}.{img_format.lower()}")
 
 async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     """Process a document assuming it's an image, return InputFile"""
@@ -250,7 +256,7 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     # Обработка изображения
     img_processed, img_format = modify_image(file_content)
 
-    output = io.BytesIO()
+    output = BytesIO()
     save_params = {}
 
     if img_format.upper() in ('JPEG', 'JPG'):
@@ -265,10 +271,15 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     elif img_format.upper() == 'TIFF':
         save_params['compression'] = 'tiff_lzw'
 
+    # Сохраняем изображение в объект output
     img_processed.save(output, format=img_format, **save_params)
-    output.seek(0)
+    output.seek(0)  # Перемещаем указатель в начало потока
 
-    return InputFile(output, filename=unique_file_name)
+    # Получаем байтовые данные
+    file_bytes = output.read()
+
+    # Возвращаем InputFile с байтами данных
+    return InputFile(io.BytesIO(file_bytes), filename=unique_file_name)
 
 
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
