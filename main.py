@@ -233,13 +233,9 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    # Получаем байтовые данные
-    file_bytes = output.read()
+    return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
 
-    # Возвращаем InputFile с байтами данных
-    return InputFile(file_bytes, filename=f"processed_{file_id}.{img_format.lower()}")
-
-async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
+async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputFile, str]:
     """Process a document assuming it's an image, return InputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
@@ -275,11 +271,7 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    # Получаем байтовые данные
-    file_bytes = output.read()
-
-    # Возвращаем InputFile с байтами данных
-    return InputFile(file_bytes, filename=unique_file_name)
+    return InputFile(output, filename=unique_file_name), unique_file_name
 
 
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
