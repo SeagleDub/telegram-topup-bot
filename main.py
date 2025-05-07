@@ -148,12 +148,12 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
         try:
             # Process images and send back to user
             for file_id in uniq_image_ids:
-                processed_file = await process_image(bot, file_id, message.chat.id)
-                await bot.send_photo(ADMIN_ID, photo=processed_file)
+                processed_file, file_name = await process_image(bot, file_id, message.chat.id)
+                await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
                 
             # Process documents and send back to user
             for file_id in uniq_doc_ids:
-                processed_file, file_name = await process_document(bot, file_id, message.chat.id)
+                processed_file, file_name = await process_image(bot, file_id, message.chat.id)
                 await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
         except Exception as e:
             bugsnag.notify(e)
@@ -206,7 +206,7 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
             reply_markup=ready_kb
         )
 
-async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[BufferedInputFile, str]:
+async def process_image(bot: Bot, file_id: str, user_id: int) -> Tuple[BufferedInputFile, str]:
     """Process a document assuming it's an image, return BufferedInputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
@@ -243,36 +243,6 @@ async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[Buffer
     output.seek(0)  # Перемещаем указатель в начало потока
 
     return BufferedInputFile(output.read(), filename=unique_file_name), unique_file_name
-
-async def process_image(bot: Bot, file_id: str, user_id: int) -> BufferedInputFile:
-    """Process a photo: apply random filter and change metadata, return BufferedInputFile"""
-    file = await bot.get_file(file_id)
-    file_content = await bot.download_file(file.file_path)
-
-    # Обработка изображения
-    img_processed, img_format = modify_image(file_content)
-
-    # Сохранение изображения в память
-    output = BytesIO()
-    save_params = {}
-
-    if img_format.upper() in ('JPEG', 'JPG'):
-        save_params['quality'] = random.randint(92, 98)
-        save_params['optimize'] = True
-    elif img_format.upper() == 'PNG':
-        save_params['optimize'] = True
-        save_params['compress_level'] = random.randint(6, 9)
-    elif img_format.upper() == 'WEBP':
-        save_params['quality'] = random.randint(92, 98)
-        save_params['method'] = 6
-    elif img_format.upper() == 'TIFF':
-        save_params['compression'] = 'tiff_lzw'
-
-    # Сохраняем изображение в объект output
-    img_processed.save(output, format=img_format, **save_params)
-    output.seek(0)  # Перемещаем указатель в начало потока
-
-    return BufferedInputFile(output.read(), filename=f"processed_{file_id}.{img_format.lower()}")
 
 def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     """Apply random filter and change metadata"""
