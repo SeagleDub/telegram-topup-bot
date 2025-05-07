@@ -272,7 +272,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> BufferedInputFi
     img_processed.save(output, format=img_format, **save_params)
     output.seek(0)  # Перемещаем указатель в начало потока
 
-    return BufferedInputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
+    return BufferedInputFile(output.read(), filename=f"processed_{file_id}.{img_format.lower()}")
 
 def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     """Apply random filter and change metadata"""
