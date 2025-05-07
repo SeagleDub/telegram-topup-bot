@@ -16,7 +16,7 @@ bugsnag.configure(
 import asyncio
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType, InputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -30,6 +30,7 @@ from typing import Union, Tuple, Optional, Dict, Any
 import io
 import random
 import piexif
+from datetime import datetime
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
@@ -202,72 +203,72 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
             reply_markup=ready_kb
         )
 
-async def process_image(bot: Bot, file_id: str, user_id: int) -> bytes:
-    """Process a photo: apply random filter and change metadata"""
+async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
+    """Process a photo: apply random filter and change metadata, return InputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
-    
-    # Process the image
-    img_processed, img_format = modify_image(file_content)
-    
-    # Prepare processed image for sending
-    with io.BytesIO() as output:
-        save_params = {}
-        
-        # Format-specific saving parameters
-        if img_format.upper() in ('JPEG', 'JPG'):
-            save_params['quality'] = random.randint(92, 98)  # Slightly random quality
-            save_params['optimize'] = True
-        elif img_format.upper() == 'PNG':
-            save_params['optimize'] = True
-            save_params['compress_level'] = random.randint(6, 9)
-        elif img_format.upper() == 'WEBP':
-            save_params['quality'] = random.randint(92, 98)
-            save_params['method'] = 6  # Higher quality
-        elif img_format.upper() == 'TIFF':
-            save_params['compression'] = 'tiff_lzw'  # Lossless compression
-            
-        img_processed.save(output, format=img_format, **save_params)
-        output.seek(0)
-        return output.getvalue()
 
-async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[bytes, str]:
-    """Process a document assuming it's an image"""
+    # Обработка изображения
+    img_processed, img_format = modify_image(file_content)
+
+    # Сохранение изображения в память
+    output = io.BytesIO()
+    save_params = {}
+
+    if img_format.upper() in ('JPEG', 'JPG'):
+        save_params['quality'] = random.randint(92, 98)
+        save_params['optimize'] = True
+    elif img_format.upper() == 'PNG':
+        save_params['optimize'] = True
+        save_params['compress_level'] = random.randint(6, 9)
+    elif img_format.upper() == 'WEBP':
+        save_params['quality'] = random.randint(92, 98)
+        save_params['method'] = 6
+    elif img_format.upper() == 'TIFF':
+        save_params['compression'] = 'tiff_lzw'
+
+    img_processed.save(output, format=img_format, **save_params)
+    output.seek(0)
+
+    # Вернуть InputFile с указанием имени
+    return InputFile(output, filename=f"processed_{file_id}.{img_format.lower()}")
+
+async def process_document(bot: Bot, file_id: str, user_id: int) -> InputFile:
+    """Process a document assuming it's an image, return InputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
     file_name = file.file_path.split('/')[-1]
-    
-    # Add a timestamp to file name to ensure uniqueness
+
+    # Уникальное имя
     name_parts = file_name.rsplit('.', 1)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if len(name_parts) > 1:
         unique_file_name = f"{name_parts[0]}_{timestamp}.{name_parts[1]}"
     else:
         unique_file_name = f"{file_name}_{timestamp}"
-    
-    # Try to process as image
+
+    # Обработка изображения
     img_processed, img_format = modify_image(file_content)
-    
-    # Prepare processed document for sending
-    with io.BytesIO() as output:
-        save_params = {}
-        
-        # Format-specific saving parameters
-        if img_format.upper() in ('JPEG', 'JPG'):
-            save_params['quality'] = random.randint(92, 98)  # Slightly random quality
-            save_params['optimize'] = True
-        elif img_format.upper() == 'PNG':
-            save_params['optimize'] = True
-            save_params['compress_level'] = random.randint(6, 9)
-        elif img_format.upper() == 'WEBP':
-            save_params['quality'] = random.randint(92, 98)
-            save_params['method'] = 6  # Higher quality
-        elif img_format.upper() == 'TIFF':
-            save_params['compression'] = 'tiff_lzw'  # Lossless compression
-            
-        img_processed.save(output, format=img_format, **save_params)
-        output.seek(0)
-        return (output.getvalue(), unique_file_name)
+
+    output = io.BytesIO()
+    save_params = {}
+
+    if img_format.upper() in ('JPEG', 'JPG'):
+        save_params['quality'] = random.randint(92, 98)
+        save_params['optimize'] = True
+    elif img_format.upper() == 'PNG':
+        save_params['optimize'] = True
+        save_params['compress_level'] = random.randint(6, 9)
+    elif img_format.upper() == 'WEBP':
+        save_params['quality'] = random.randint(92, 98)
+        save_params['method'] = 6
+    elif img_format.upper() == 'TIFF':
+        save_params['compression'] = 'tiff_lzw'
+
+    img_processed.save(output, format=img_format, **save_params)
+    output.seek(0)
+
+    return InputFile(output, filename=unique_file_name)
 
 
 def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
