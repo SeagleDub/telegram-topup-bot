@@ -11,6 +11,11 @@ import gspread
 from dotenv import load_dotenv
 import bugsnag
 import re
+from PIL import Image, ImageFilter, ImageEnhance, PngInfo, TiffImagePlugin
+from typing import Union, Tuple, Optional, Dict, Any
+import io
+import random
+import piexif
 
 load_dotenv()
 
@@ -33,7 +38,8 @@ dp.include_router(router)
 menu_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
-    [KeyboardButton(text="🌐 Создать/починить лендинг")]
+    [KeyboardButton(text="🌐 Создать/починить лендинг")],
+    [KeyboardButton(text="🖼️ Уникализатор")]
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
@@ -54,6 +60,8 @@ class Form(StatesGroup):
     writing_specification = State()
     entering_canvas_link = State()
     uploading_zip_file = State()
+    # unicalisation
+    images_unicalization = State()
 
 last_messages = {}
 
@@ -104,6 +112,328 @@ ready_kb = ReplyKeyboardMarkup(
     resize_keyboard=True,
     one_time_keyboard=False
 )
+
+MAX_IMAGES = 10
+
+@router.message(F.text == "🖼️ Уникализатор")
+async def images_unicalization_initiation(message: Message, state: FSMContext):
+    m1 = await message.answer("Загрузите изображения")
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.images_unicalization)
+
+@router.message(Form.images_unicalization)
+async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+        
+    data = await state.get_data()
+    uniq_image_ids = data.get("uniq_image_ids", [])
+    uniq_doc_ids = data.get("uniq_doc_ids", [])
+    
+    if message.text == "✅ Готово":
+        if not uniq_image_ids and not uniq_doc_ids:
+            await message.answer("У вас нет изображений для обработки. Пожалуйста, загрузите хотя бы одно изображение.", 
+                                reply_markup=menu_kb)
+            return
+            
+        await message.answer(f"Подождите, пока изображения обработаются.", reply_markup=menu_kb)
+        
+        # Process images and send back to user
+        for file_id in uniq_image_ids:
+            processed_file = await process_image(bot, file_id, message.chat.id)
+            await bot.send_photo(message.chat.id, photo=processed_file)
+            
+        # Process documents and send back to user
+        for file_id in uniq_doc_ids:
+            processed_file, file_name = await process_document(bot, file_id, message.chat.id)
+            await bot.send_document(message.chat.id, document=processed_file, file_name=file_name)
+            
+        await message.answer(f"Процесс уникализации завершен. Всего уникализировано: {len(uniq_image_ids) + len(uniq_doc_ids)} изображений.", 
+                            reply_markup=menu_kb)
+        await state.clear()
+        return
+        
+    total_images = len(uniq_image_ids) + len(uniq_doc_ids)
+    if total_images >= MAX_IMAGES:
+        await message.answer(
+            f"Достигнут лимит в {MAX_IMAGES} изображений. Нажмите *Готово* для обработки или *Отмена* для сброса.",
+            reply_markup=ready_kb,
+            parse_mode="Markdown"
+        )
+        return
+        
+    if message.photo:
+        largest_photo = message.photo[-1]
+        uniq_image_ids.append(largest_photo.file_id)
+        
+        await state.update_data(uniq_image_ids=uniq_image_ids)
+        
+        await message.answer(
+            f"✅ Добавлено фото {len(uniq_image_ids) + len(uniq_doc_ids)}/{MAX_IMAGES}.\nМожете отправить ещё изображение или нажмите *Готово*",
+            reply_markup=ready_kb,
+            parse_mode="Markdown"
+        )
+    elif message.document:
+        if message.document.mime_type and message.document.mime_type.startswith('image/'):
+            uniq_doc_ids.append(message.document.file_id)
+            
+            await state.update_data(uniq_doc_ids=uniq_doc_ids)
+            
+            await message.answer(
+                f"✅ Добавлен документ {len(uniq_image_ids) + len(uniq_doc_ids)}/{MAX_IMAGES}.\nМожете отправить ещё изображение или нажмите *Готово*",
+                reply_markup=ready_kb,
+                parse_mode="Markdown"
+            )
+        else:
+            await message.answer(
+                "❌ Документ не является изображением. Пожалуйста, отправьте только графические файлы.",
+                reply_markup=ready_kb
+            )
+    else:
+        await message.answer(
+            "Пожалуйста, отправьте фото или изображение.",
+            reply_markup=ready_kb
+        )
+
+async def process_image(bot: Bot, file_id: str, user_id: int) -> bytes:
+    """Process a photo: apply random filter and change metadata"""
+    file = await bot.get_file(file_id)
+    file_content = await bot.download_file(file.file_path)
+    
+    # Process the image
+    img_processed, img_format = modify_image(file_content)
+    
+    # Prepare processed image for sending
+    with io.BytesIO() as output:
+        save_params = {}
+        
+        # Format-specific saving parameters
+        if img_format.upper() in ('JPEG', 'JPG'):
+            save_params['quality'] = random.randint(92, 98)  # Slightly random quality
+            save_params['optimize'] = True
+        elif img_format.upper() == 'PNG':
+            save_params['optimize'] = True
+            save_params['compress_level'] = random.randint(6, 9)
+        elif img_format.upper() == 'WEBP':
+            save_params['quality'] = random.randint(92, 98)
+            save_params['method'] = 6  # Higher quality
+        elif img_format.upper() == 'TIFF':
+            save_params['compression'] = 'tiff_lzw'  # Lossless compression
+            
+        img_processed.save(output, format=img_format, **save_params)
+        output.seek(0)
+        return output.getvalue()
+
+async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[bytes, str]:
+    """Process a document assuming it's an image"""
+    file = await bot.get_file(file_id)
+    file_content = await bot.download_file(file.file_path)
+    file_name = file.file_path.split('/')[-1]
+    
+    # Add a timestamp to file name to ensure uniqueness
+    name_parts = file_name.rsplit('.', 1)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if len(name_parts) > 1:
+        unique_file_name = f"{name_parts[0]}_{timestamp}.{name_parts[1]}"
+    else:
+        unique_file_name = f"{file_name}_{timestamp}"
+    
+    try:
+        # Try to process as image
+        img_processed, img_format = modify_image(file_content)
+        
+        # Prepare processed document for sending
+        with io.BytesIO() as output:
+            save_params = {}
+            
+            # Format-specific saving parameters
+            if img_format.upper() in ('JPEG', 'JPG'):
+                save_params['quality'] = random.randint(92, 98)  # Slightly random quality
+                save_params['optimize'] = True
+            elif img_format.upper() == 'PNG':
+                save_params['optimize'] = True
+                save_params['compress_level'] = random.randint(6, 9)
+            elif img_format.upper() == 'WEBP':
+                save_params['quality'] = random.randint(92, 98)
+                save_params['method'] = 6  # Higher quality
+            elif img_format.upper() == 'TIFF':
+                save_params['compression'] = 'tiff_lzw'  # Lossless compression
+                
+            img_processed.save(output, format=img_format, **save_params)
+            output.seek(0)
+            return (output.getvalue(), unique_file_name)
+    except Exception as e:
+        print(f"Error processing document: {e}")
+        return (file_content, unique_file_name)
+
+def modify_image(file_content: bytes) -> Tuple[Image.Image, str]:
+    """Apply random subtle filter and change metadata"""
+    img = Image.open(io.BytesIO(file_content))
+    img_format = img.format or "JPEG"
+    
+    # Convert to RGB if needed (for some filters)
+    if img.mode == 'P':
+        img = img.convert('RGBA' if 'transparency' in img.info else 'RGB')
+    
+    # Apply random subtle filter (around 1%)
+    filter_type = random.choice(['brightness', 'contrast', 'color', 'sharpness', 'blur', 'noise', 'rotate'])
+    
+    if filter_type == 'brightness':
+        factor = random.uniform(0.99, 1.01)  # ±1% brightness
+        img = ImageEnhance.Brightness(img).enhance(factor)
+    elif filter_type == 'contrast':
+        factor = random.uniform(0.99, 1.01)  # ±1% contrast
+        img = ImageEnhance.Contrast(img).enhance(factor)
+    elif filter_type == 'color':
+        if img.mode in ('RGB', 'RGBA'):
+            factor = random.uniform(0.99, 1.01)  # ±1% color
+            img = ImageEnhance.Color(img).enhance(factor)
+    elif filter_type == 'sharpness':
+        factor = random.uniform(0.99, 1.01)  # ±1% sharpness
+        img = ImageEnhance.Sharpness(img).enhance(factor)
+    elif filter_type == 'blur':
+        # Extremely slight blur
+        img = img.filter(ImageFilter.GaussianBlur(radius=0.1))
+    elif filter_type == 'noise':
+        # Add extremely slight noise to one pixel
+        if img.mode in ('RGB', 'RGBA'):
+            for _ in range(3):  # Add noise to 3 random pixels
+                x = random.randint(0, img.width - 1)
+                y = random.randint(0, img.height - 1)
+                current_pixel = list(img.getpixel((x, y)))
+                
+                # Change each channel by a tiny amount
+                for i in range(min(3, len(current_pixel))):
+                    current_pixel[i] = max(0, min(255, current_pixel[i] + random.randint(-1, 1)))
+                
+                img.putpixel((x, y), tuple(current_pixel))
+    elif filter_type == 'rotate':
+        # Rotate by a tiny amount (±0.1 degrees)
+        angle = random.uniform(-0.1, 0.1)
+        img = img.rotate(angle, resample=Image.BICUBIC, expand=False)
+    
+    # Modify one random pixel slightly (additional to any filter)
+    if img.mode in ('RGB', 'RGBA'):
+        x = random.randint(0, img.width - 1)
+        y = random.randint(0, img.height - 1)
+        current_pixel = list(img.getpixel((x, y)))
+        
+        # Change one channel by 1
+        channel = random.randint(0, min(3, len(current_pixel)) - 1)
+        current_pixel[channel] = max(0, min(255, current_pixel[channel] + random.choice([-1, 1])))
+        
+        img.putpixel((x, y), tuple(current_pixel))
+    
+    # Generate a unique identifier for this image
+    unique_id = uuid.uuid4().hex
+    current_time = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
+    
+    # Change metadata based on image format
+    if img_format.upper() in ('JPEG', 'JPG'):
+        try:
+            # Create completely new EXIF data
+            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
+            
+            # Standard EXIF tags
+            exif_dict["0th"][piexif.ImageIFD.Make] = f"Camera{random.randint(1, 9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Model] = f"Model{random.randint(1, 9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Software] = f"Software{random.randint(1, 9999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Artist] = f"Artist{random.randint(1, 999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.Copyright] = f"Copyright{random.randint(1, 999)}".encode()
+            exif_dict["0th"][piexif.ImageIFD.ImageDescription] = f"Image{random.randint(1, 9999)}".encode()
+            
+            # Exif metadata
+            exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = current_time.encode()
+            exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = current_time.encode()
+            exif_dict["Exif"][piexif.ExifIFD.ExifVersion] = b"0230"
+            exif_dict["Exif"][piexif.ExifIFD.LensMake] = f"Lens{random.randint(1, 999)}".encode()
+            exif_dict["Exif"][piexif.ExifIFD.LensModel] = f"LensModel{random.randint(1, 999)}".encode()
+            exif_dict["Exif"][piexif.ExifIFD.UserComment] = f"UniqueID:{unique_id}".encode()
+            
+            # GPS metadata (random but valid coordinates)
+            lat = random.uniform(-90, 90)
+            lon = random.uniform(-180, 180)
+            lat_ref = "N" if lat >= 0 else "S"
+            lon_ref = "E" if lon >= 0 else "W"
+            lat = abs(lat)
+            lon = abs(lon)
+            
+            exif_dict["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat_ref.encode()
+            exif_dict["GPS"][piexif.GPSIFD.GPSLatitude] = ((int(lat), 1), (int((lat % 1) * 60), 1), (int(((lat % 1) * 60) % 1 * 60), 1))
+            exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lon_ref.encode()
+            exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = ((int(lon), 1), (int((lon % 1) * 60), 1), (int(((lon % 1) * 60) % 1 * 60), 1))
+            exif_dict["GPS"][piexif.GPSIFD.GPSDateStamp] = datetime.now().strftime("%Y:%m:%d").encode()
+            
+            # Convert to bytes
+            exif_bytes = piexif.dump(exif_dict)
+            
+            # Create a new image with exif data
+            with io.BytesIO() as output:
+                img.save(output, format=img_format, exif=exif_bytes, quality=95)
+                output.seek(0)
+                img = Image.open(output)
+        except Exception as e:
+            print(f"Error setting EXIF data: {e}")
+    
+    elif img_format.upper() == 'PNG':
+        # For PNG files, add metadata in the form of text chunks
+        metadata = PngInfo()
+        
+        # Add standard metadata
+        metadata.add_text("Software", f"Editor{random.randint(1, 9999)}")
+        metadata.add_text("Creation Time", current_time)
+        metadata.add_text("UniqueID", unique_id)
+        metadata.add_text("Description", f"Image {random.randint(1000, 9999)}")
+        metadata.add_text("Author", f"Author{random.randint(1, 999)}")
+        metadata.add_text("Copyright", f"Copyright{random.randint(1, 999)}")
+        metadata.add_text("Comment", f"Processed on {current_time}")
+        metadata.add_text("Disclaimer", f"Generated image {random.randint(1, 9999)}")
+        metadata.add_text("Source", f"Source{random.randint(1, 999)}")
+        metadata.add_text("Title", f"Title{random.randint(1, 999)}")
+        
+        # Save with metadata
+        with io.BytesIO() as output:
+            img.save(output, format="PNG", pnginfo=metadata)
+            output.seek(0)
+            img = Image.open(output)
+    
+    elif img_format.upper() == 'TIFF':
+        # For TIFF files, modify tags
+        try:
+            # Create a temporary file with tags
+            with io.BytesIO() as output:
+                tags = {
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x010e]: f"Image {random.randint(1000, 9999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x010f]: f"Camera{random.randint(1, 9999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x0110]: f"Model{random.randint(1, 9999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x0131]: f"Software{random.randint(1, 9999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x013b]: f"Artist{random.randint(1, 999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x8298]: f"Copyright{random.randint(1, 999)}",
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9003]: current_time,
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9004]: current_time,
+                    TiffImagePlugin.IMAGELOGIC_TAGS[0x9286]: f"UniqueID:{unique_id}",
+                }
+                img.save(output, format="TIFF", tiffinfo=tags)
+                output.seek(0)
+                img = Image.open(output)
+        except Exception as e:
+            print(f"Error setting TIFF tags: {e}")
+    
+    elif img_format.upper() == 'WEBP':
+        # WEBP supports metadata through EXIF
+        try:
+            with io.BytesIO() as output:
+                img.save(output, format="WEBP", exif=f"UniqueID:{unique_id}")
+                output.seek(0)
+                img = Image.open(output)
+        except Exception as e:
+            print(f"Error setting WEBP metadata: {e}")
+    
+    # For formats that don't support metadata, we only rely on pixel modifications
+    
+    return img, img_format
 
 @router.message(Form.writing_specification)
 async def write_specification(message: Message, state: FSMContext):
