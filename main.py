@@ -149,15 +149,15 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
             # Process images and send back to user
             for file_id in uniq_image_ids:
                 processed_file = await process_image(bot, file_id, message.chat.id)
-                await bot.send_document(ADMIN_ID, document=processed_file)
+                await bot.send_document(message.chat.id, document=processed_file)
                 
             # Process documents and send back to user
             for file_id in uniq_doc_ids:
                 processed_file = await process_image(bot, file_id, message.chat.id)
-                await bot.send_document(ADMIN_ID, document=processed_file)
+                await bot.send_document(message.chat.id, document=processed_file)
         except Exception as e:
             bugsnag.notify(e)
-            await message.answer(f"❌ Ошибка при отправке фото: {e}")
+            await message.answer(f"❌ Ошибка при отправке фото")
             
         await message.answer(f"Процесс уникализации завершен. Всего уникализировано: {len(uniq_image_ids) + len(uniq_doc_ids)} изображений.", 
                             reply_markup=menu_kb)
