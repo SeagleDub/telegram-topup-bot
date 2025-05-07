@@ -1,21 +1,6 @@
-import os
-import asyncio
-from aiogram import Bot, Dispatcher, Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-import shortuuid
-import gspread
 from dotenv import load_dotenv
 import bugsnag
-import re
-from PIL import Image, ImageFilter, ImageEnhance, PngInfo, TiffImagePlugin
-from typing import Union, Tuple, Optional, Dict, Any
-import io
-import random
-import piexif
+import os
 
 load_dotenv()
 
@@ -27,6 +12,22 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 bugsnag.configure(
     api_key=BUGSNAG_TOKEN
 )
+
+import asyncio
+from aiogram import Bot, Dispatcher, Router, F
+from aiogram.filters import Command
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ContentType
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+import shortuuid
+import gspread
+import re
+from PIL import Image, ImageFilter, ImageEnhance, PngInfo, TiffImagePlugin
+from typing import Union, Tuple, Optional, Dict, Any
+import io
+import random
+import piexif
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
