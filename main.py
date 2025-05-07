@@ -206,8 +206,8 @@ async def images_unicalization(message: Message, state: FSMContext, bot: Bot):
             reply_markup=ready_kb
         )
 
-async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
-    """Process a photo: apply random filter and change metadata, return InputFile"""
+async def process_image(bot: Bot, file_id: str, user_id: int) -> BufferedInputFile:
+    """Process a photo: apply random filter and change metadata, return BufferedInputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
 
@@ -236,8 +236,8 @@ async def process_image(bot: Bot, file_id: str, user_id: int) -> InputFile:
 
     return BufferedInputFile(output.read(), filename=f"processed_{file_id}.{img_format.lower()}")
 
-async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[InputFile, str]:
-    """Process a document assuming it's an image, return InputFile"""
+async def process_document(bot: Bot, file_id: str, user_id: int) -> Tuple[BufferedInputFile, str]:
+    """Process a document assuming it's an image, return BufferedInputFile"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
     file_name = file.file_path.split('/')[-1]
