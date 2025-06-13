@@ -131,7 +131,7 @@ async def send_broadcast(query: CallbackQuery, state: FSMContext):
     await query.answer("Начинаю рассылку...")
     data = await state.get_data()
     messages = data.get("broadcast_messages", [])
-    user_ids = get_user_ids_from_sheet()
+    user_ids = await get_user_ids_from_sheet()
 
     if not user_ids:
         await query.message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
@@ -172,7 +172,7 @@ async def cancel_broadcast(query: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
+    if not await is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -219,7 +219,7 @@ ready_kb = ReplyKeyboardMarkup(
 
 @router.message(F.text == "🖼️ Уникализатор")
 async def images_unicalization_initiation(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
+    if not await is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     m1 = await message.answer("Загрузите изображение для уникализации (одно изображение)")
@@ -561,7 +561,7 @@ async def upload_zip_file(message: Message, state: FSMContext):
 
 @router.message(F.text == "💰 Заказать пополнение")
 async def order_topup(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
+    if not await is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -637,9 +637,9 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "📂 Запросить расходники")
 async def request_supplies(message: Message, state: FSMContext):
-    users = get_user_ids_from_sheet()
+    users = await get_user_ids_from_sheet()
     await message.answer(str(users))
-    if not is_user_allowed(message.from_user.id):
+    if not await is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -819,20 +819,20 @@ async def delete_last_messages(user_id, current_message):
             pass
     last_messages[user_id] = []
 
-def is_user_allowed(user_id: int) -> bool:
-    user_ids = get_user_ids_from_sheet()
+async def is_user_allowed(user_id: int) -> bool:
+    user_ids = await get_user_ids_from_sheet()
     if not user_ids:
         return False  # Если список пуст, доступ запрещен
 
     return user_id in user_ids
 
-def get_user_ids_from_sheet() -> list[int]:
-    # gc = gspread.service_account(filename='credentials.json')
-    # table = gc.open_by_key(GOOGLE_SHEET_ID)
-    # worksheet = table.sheet2
-    # user_ids = worksheet.col_values(1)
+async def get_user_ids_from_sheet() -> list[int]:
+    gc = gspread.service_account(filename='credentials.json')
+    table = gc.open_by_key(GOOGLE_SHEET_ID)
+    worksheet = table.sheet2
+    user_ids = worksheet.col_values(1)
 
-    return []
+    return [int(user_id) for user_id in user_ids if user_id.isdigit()]
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)  # если запускаешь polling
