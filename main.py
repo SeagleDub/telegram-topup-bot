@@ -42,15 +42,11 @@ dp = Dispatcher(storage=storage)
 router = Router()
 dp.include_router(router)
 
-menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+menu_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")]
-])
-
-menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="📢 Сделать рассылку")]
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
@@ -74,101 +70,12 @@ class Form(StatesGroup):
     # unicalisation
     images_unicalization = State()
     unicalization_copies = State()
-    # broadcast
-    broadcast_collecting = State()
 
 last_messages = {}
 
 @router.message(Command("start"))
 async def send_welcome(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Админ-панель:", reply_markup=menu_kb_admin)
-    else:
-        await message.answer("Выберите действие:", reply_markup=menu_kb_user)
-
-@router.message(F.text == "📢 Сделать рассылку")
-async def admin_broadcast_start(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
-    
-    await state.clear()
-    await state.update_data(broadcast_messages=[])
-    await message.answer(
-        "Отправьте мне любые сообщения, которые хотите разослать.\n"
-        "Когда закончите, нажмите кнопку «Послать рассылку».",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 Послать рассылку", callback_data="broadcast:send")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
-            ]
-        )
-    )
-    await state.set_state(Form.broadcast_collecting)
-
-@router.message(Form.broadcast_collecting)
-async def collect_broadcast_messages(message: Message, state: FSMContext):
-    data = await state.get_data()
-    broadcast_messages = data.get("broadcast_messages", [])
-
-    # Сохраняем необходимую информацию из сообщения для пересылки
-    msg_data = {
-        "message_id": message.message_id,
-        "chat_id": message.chat.id,  # для пересылки
-    }
-    broadcast_messages.append(msg_data)
-    await state.update_data(broadcast_messages=broadcast_messages)
-
-    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «Послать рассылку».", reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Послать рассылку", callback_data="broadcast:send")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
-        ]
-    ))
-
-@router.callback_query(F.data == "broadcast:send", Form.broadcast_collecting)
-async def send_broadcast(query: CallbackQuery, state: FSMContext):
-    await query.answer("Начинаю рассылку...")
-    data = await state.get_data()
-    messages = data.get("broadcast_messages", [])
-    user_ids = await get_user_ids_from_sheet()
-
-    if not user_ids:
-        await query.message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
-        await state.clear()
-        return
-
-    success_count = 0
-    fail_count = 0
-
-    for user_id in user_ids:
-        user_success = True
-        for msg in messages:
-            try:
-                await bot.copy_message(chat_id=user_id, from_chat_id=msg["chat_id"], message_id=msg["message_id"])
-            except Exception as e:
-                print(f"Ошибка при отправке пользователю {user_id}: {e}")
-                user_success = False
-                # не делаем break, чтобы попытаться отправить остальные сообщения, если хочешь
-
-        if user_success:
-            success_count += 1
-        else:
-            fail_count += 1
-
-    await query.message.answer(
-        f"✅ Рассылка завершена.\n"
-        f"Отправлено: {success_count}\n"
-        f"Не доставлено: {fail_count}",
-        reply_markup=menu_kb_admin
-    )
-    await state.clear()
-
-@router.callback_query(F.data == "broadcast:cancel", Form.broadcast_collecting)
-async def cancel_broadcast(query: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await query.message.answer("Рассылка отменена.", reply_markup=menu_kb_admin)
-    await query.answer()
+    await message.answer("Выберите действие:", reply_markup=menu_kb)
 
 @router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
@@ -266,7 +173,7 @@ async def receive_copy_count(message: Message, state: FSMContext, bot: Bot):
     try:
         images_zip = await process_image(bot, unicalization_file_id, message.chat.id, count)
         await bot.send_document(message.chat.id, document=images_zip)
-        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=menu_kb_user)
+        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=menu_kb)
     except Exception as e:
         bugsnag.notify(e)
         await message.answer("❌ Произошла ошибка при обработке изображения.")
@@ -556,7 +463,7 @@ async def upload_zip_file(message: Message, state: FSMContext):
     worksheet = table.sheet1
     worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link])
     
-    await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
 
 @router.message(F.text == "💰 Заказать пополнение")
@@ -631,7 +538,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
         f"📌 Тип: {topup_type_text}",
         reply_markup=kb
     )
-    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
     await query.answer()
 
@@ -721,7 +628,7 @@ async def get_account_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
 
 @router.message(Form.entering_domain_quantity)
@@ -754,7 +661,7 @@ async def get_domain_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb)
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve:"))
@@ -806,7 +713,7 @@ async def decline_request(query: CallbackQuery):
 async def cancel_handler(message: Message, state: FSMContext):
     await delete_last_messages(message.from_user.id, message)
     await state.clear()
-    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb_user)
+    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb)
 
 async def delete_last_messages(user_id, current_message):
     ids = last_messages.get(user_id, [])
@@ -818,19 +725,12 @@ async def delete_last_messages(user_id, current_message):
     last_messages[user_id] = []
 
 def is_user_allowed(user_id: int) -> bool:
-    user_ids = get_user_ids_from_sheet()
-    if not user_ids:
-        return False  # Если список пуст, доступ запрещен
-
-    return str(user_id) in user_ids
-
-async def get_user_ids_from_sheet() -> list[int]:
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.get_worksheet(1)
     user_ids = worksheet.col_values(1)
 
-    return [int(user_id) for user_id in user_ids if user_id.isdigit()]
+    return str(user_id) in user_ids
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)  # если запускаешь polling
