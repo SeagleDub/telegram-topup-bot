@@ -639,7 +639,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
 async def request_supplies(message: Message, state: FSMContext):
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
-    worksheet = table.sheet2
+    worksheet = table.get_worksheet(1)
     user_ids = worksheet.col_values(1)
     await message.answer(str(user_ids))
     # if not is_user_allowed(message.from_user.id):
