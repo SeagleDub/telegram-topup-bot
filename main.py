@@ -827,10 +827,10 @@ def is_user_allowed(user_id: int) -> bool:
     return user_id in user_ids
 
 def get_user_ids_from_sheet() -> list[int]:
-    # gc = gspread.service_account(filename='credentials.json')
-    # table = gc.open_by_key(GOOGLE_SHEET_ID)
-    # worksheet = table.sheet2
-    # user_ids = worksheet.col_values(1)
+    gc = gspread.service_account(filename='credentials.json')
+    table = gc.open_by_key(GOOGLE_SHEET_ID)
+    worksheet = table.sheet2
+    user_ids = worksheet.col_values(1)
 
     return []
 
