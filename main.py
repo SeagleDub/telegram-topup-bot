@@ -172,9 +172,9 @@ async def cancel_broadcast(query: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
+    # if not is_user_allowed(message.from_user.id):
+    #     await message.answer("❌ У вас нет доступа к этой функции.")
+    #     return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💻 Создать лендинг", callback_data="landing:create")],
         [InlineKeyboardButton(text="🔧 Починить лендинг", callback_data="landing:repair")]
@@ -219,9 +219,9 @@ ready_kb = ReplyKeyboardMarkup(
 
 @router.message(F.text == "🖼️ Уникализатор")
 async def images_unicalization_initiation(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
+    # if not is_user_allowed(message.from_user.id):
+    #     await message.answer("❌ У вас нет доступа к этой функции.")
+    #     return
     m1 = await message.answer("Загрузите изображение для уникализации (одно изображение)")
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
@@ -561,9 +561,9 @@ async def upload_zip_file(message: Message, state: FSMContext):
 
 @router.message(F.text == "💰 Заказать пополнение")
 async def order_topup(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
+    # if not is_user_allowed(message.from_user.id):
+    #     await message.answer("❌ У вас нет доступа к этой функции.")
+    #     return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏦 AdsCard", callback_data="bank:adscard"),
          InlineKeyboardButton(text="💳 Traffic.cards", callback_data="bank:trafficcards")]
@@ -642,9 +642,9 @@ async def request_supplies(message: Message, state: FSMContext):
     worksheet = table.sheet2
     user_ids = worksheet.col_values(1)
     await message.answer(str(user_ids))
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
+    # if not is_user_allowed(message.from_user.id):
+    #     await message.answer("❌ У вас нет доступа к этой функции.")
+    #     return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👤 Аккаунты", callback_data="supply:accounts")],
         [InlineKeyboardButton(text="🌐 Домены", callback_data="supply:domains")]
