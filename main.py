@@ -822,12 +822,12 @@ def is_user_allowed(user_id: int) -> bool:
     if not user_ids:
         return False  # Если список пуст, доступ запрещен
 
-    return user_id in user_ids
+    return str(user_id) in user_ids
 
 async def get_user_ids_from_sheet() -> list[int]:
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
-    worksheet = table.sheet2
+    worksheet = table.get_worksheet(1)
     user_ids = worksheet.col_values(1)
 
     return [int(user_id) for user_id in user_ids if user_id.isdigit()]
