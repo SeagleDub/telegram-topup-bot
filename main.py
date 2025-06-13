@@ -108,30 +108,15 @@ async def admin_broadcast_start(message: Message, state: FSMContext):
     )
     await state.set_state(Form.broadcast_collecting)
 
-@router.message(Form.broadcast_collecting)
-async def collect_broadcast_messages(message: Message, state: FSMContext):
-    data = await state.get_data()
-    broadcast_messages = data.get("broadcast_messages", [])
-
-    # Сохраняем необходимую информацию из сообщения для пересылки
-    msg_data = {
-        "message_id": message.message_id,
-        "chat_id": message.chat.id,  # для пересылки
-    }
-    broadcast_messages.append(msg_data)
-    await state.update_data(broadcast_messages=broadcast_messages)
-
-    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «🚀 Послать».")
-
 @router.message(Form.broadcast_collecting, F.text == "🚀 Послать")
-async def send_broadcast(query: CallbackQuery, state: FSMContext):
-    await query.answer("Начинаю рассылку...")
+async def send_broadcast(message: Message, state: FSMContext):
+    await message.answer("Начинаю рассылку...")
     data = await state.get_data()
     messages = data.get("broadcast_messages", [])
     user_ids = get_user_ids_from_sheet()
 
     if not user_ids:
-        await query.message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
+        await message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
         await state.clear()
         return
 
@@ -153,7 +138,7 @@ async def send_broadcast(query: CallbackQuery, state: FSMContext):
         else:
             fail_count += 1
 
-    await query.message.answer(
+    await message.answer(
         f"✅ Рассылка завершена.\n"
         f"Отправлено: {success_count}\n"
         f"Не доставлено: {fail_count}",
@@ -162,10 +147,24 @@ async def send_broadcast(query: CallbackQuery, state: FSMContext):
     await state.clear()
 
 @router.message(Form.broadcast_collecting, F.text == "❌ Отмена")
-async def cancel_broadcast(query: CallbackQuery, state: FSMContext):
+async def cancel_broadcast(message: Message, state: FSMContext):
     await state.clear()
-    await query.message.answer("Рассылка отменена.", reply_markup=menu_kb_admin)
-    await query.answer()
+    await message.answer("Рассылка отменена.", reply_markup=menu_kb_admin)
+
+@router.message(Form.broadcast_collecting)
+async def collect_broadcast_messages(message: Message, state: FSMContext):
+    data = await state.get_data()
+    broadcast_messages = data.get("broadcast_messages", [])
+
+    # Сохраняем необходимую информацию из сообщения для пересылки
+    msg_data = {
+        "message_id": message.message_id,
+        "chat_id": message.chat.id,  # для пересылки
+    }
+    broadcast_messages.append(msg_data)
+    await state.update_data(broadcast_messages=broadcast_messages)
+
+    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «🚀 Послать».")
 
 @router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
