@@ -113,7 +113,7 @@ async def send_broadcast(message: Message, state: FSMContext):
     await message.answer("Начинаю рассылку...")
     data = await state.get_data()
     messages = data.get("broadcast_messages", [])
-    
+
     if not messages:
         await message.answer("⚠️ Список сообщений пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
         await state.clear()
@@ -131,13 +131,24 @@ async def send_broadcast(message: Message, state: FSMContext):
 
     for user_id in user_ids:
         user_success = True
+        try:
+            await bot.send_message(
+                user_id,
+                text="*📢 Сообщение от админа*",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Ошибка при отправке заголовка пользователю {user_id}: {e}")
+            user_success = False
+            continue  # если не удалось отправить заголовок, пропускаем этого пользователя
+        
         for msg in messages:
             try:
                 await bot.copy_message(chat_id=user_id, from_chat_id=msg["chat_id"], message_id=msg["message_id"])
             except Exception as e:
                 print(f"Ошибка при отправке пользователю {user_id}: {e}")
                 user_success = False
-                # не делаем break, чтобы попытаться отправить остальные сообщения, если хочешь
+                # не делаем break, чтобы попытаться отправить остальные сообщения
 
         if user_success:
             success_count += 1
