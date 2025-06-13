@@ -96,12 +96,14 @@ async def admin_broadcast_start(message: Message, state: FSMContext):
     await state.update_data(broadcast_messages=[])
     await message.answer(
         "Отправьте мне любые сообщения, которые хотите разослать.\n"
-        "Когда закончите, нажмите кнопку «Послать рассылку».",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🚀 Послать рассылку", callback_data="broadcast:send")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
-            ]
+        "Когда закончите, нажмите кнопку «🚀 Послать",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🚀 Послать", callback_data="broadcast:send")],
+                [KeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=False
         )
     )
     await state.set_state(Form.broadcast_collecting)
@@ -119,14 +121,9 @@ async def collect_broadcast_messages(message: Message, state: FSMContext):
     broadcast_messages.append(msg_data)
     await state.update_data(broadcast_messages=broadcast_messages)
 
-    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «Послать рассылку».", reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Послать рассылку", callback_data="broadcast:send")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
-        ]
-    ))
+    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «🚀 Послать».")
 
-@router.callback_query(F.data == "broadcast:send", Form.broadcast_collecting)
+@router.message(Form.broadcast_collecting, F.text == "🚀 Послать")
 async def send_broadcast(query: CallbackQuery, state: FSMContext):
     await query.answer("Начинаю рассылку...")
     data = await state.get_data()
@@ -164,7 +161,7 @@ async def send_broadcast(query: CallbackQuery, state: FSMContext):
     )
     await state.clear()
 
-@router.callback_query(F.data == "broadcast:cancel", Form.broadcast_collecting)
+@router.message(Form.broadcast_collecting, F.text == "❌ Отмена")
 async def cancel_broadcast(query: CallbackQuery, state: FSMContext):
     await state.clear()
     await query.message.answer("Рассылка отменена.", reply_markup=menu_kb_admin)
