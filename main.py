@@ -99,8 +99,8 @@ async def admin_broadcast_start(message: Message, state: FSMContext):
         "Когда закончите, нажмите кнопку «🚀 Послать",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="🚀 Послать", callback_data="broadcast:send")],
-                [KeyboardButton(text="❌ Отмена", callback_data="broadcast:cancel")]
+                [KeyboardButton(text="🚀 Послать рассылку")],
+                [KeyboardButton(text="❌ Отмена")]
             ],
             resize_keyboard=True,
             one_time_keyboard=False
