@@ -832,7 +832,7 @@ def get_user_ids_from_sheet() -> list[int]:
     worksheet = table.sheet2
     user_ids = worksheet.col_values(1)
 
-    return user_ids
+    return [int(user_id) for user_id in user_ids if user_id.isdigit()]
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)  # если запускаешь polling
