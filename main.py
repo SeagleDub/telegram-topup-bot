@@ -113,6 +113,12 @@ async def send_broadcast(message: Message, state: FSMContext):
     await message.answer("Начинаю рассылку...")
     data = await state.get_data()
     messages = data.get("broadcast_messages", [])
+    
+    if not messages:
+        await message.answer("⚠️ Список сообщений пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
+        await state.clear()
+        return
+
     user_ids = get_user_ids_from_sheet()
 
     if not user_ids:
