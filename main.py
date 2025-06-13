@@ -131,7 +131,7 @@ async def send_broadcast(query: CallbackQuery, state: FSMContext):
     await query.answer("Начинаю рассылку...")
     data = await state.get_data()
     messages = data.get("broadcast_messages", [])
-    user_ids = await get_user_ids_from_sheet()
+    user_ids = get_user_ids_from_sheet()
 
     if not user_ids:
         await query.message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
@@ -824,7 +824,7 @@ def is_user_allowed(user_id: int) -> bool:
 
     return user_id in user_ids
 
-async def get_user_ids_from_sheet() -> list[int]:
+def get_user_ids_from_sheet() -> list[int]:
     gc = gspread.service_account(filename='credentials.json')
     table = gc.open_by_key(GOOGLE_SHEET_ID)
     worksheet = table.sheet2
