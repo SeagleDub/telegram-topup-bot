@@ -637,6 +637,8 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "📂 Запросить расходники")
 async def request_supplies(message: Message, state: FSMContext):
+    users = get_user_ids_from_sheet()
+    await message.answer(str(users))
     if not is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
