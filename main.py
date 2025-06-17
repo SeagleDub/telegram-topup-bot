@@ -30,6 +30,7 @@ from typing import Union, Tuple, Optional, Dict, Any
 import io
 from io import BytesIO
 import random
+import string
 import piexif
 from datetime import datetime
 import uuid
@@ -286,6 +287,10 @@ async def receive_copy_count(message: Message, state: FSMContext, bot: Bot):
 
     await state.clear()
 
+def generate_random_filename(length=12, ext='jpg'):
+    random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+    return f"{random_str}.{ext}"
+
 async def process_image(bot: Bot, file_id: str, user_id: int, copies: int) -> BufferedInputFile:
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
@@ -296,8 +301,7 @@ async def process_image(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
     zip_buffer = BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for i in range(copies):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            unique_file_name = f"{name_parts[0]}_{timestamp}_{i+1}.{ext}"
+            unique_file_name = generate_random_filename(ext=ext)
 
             img_processed, img_format = modify_image(BytesIO(file_content.getvalue()))
             output = BytesIO()
