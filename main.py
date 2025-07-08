@@ -542,7 +542,7 @@ async def upload_multiple_zip_files(message: Message, state: FSMContext):
     zip_files.append(message.document.file_id)
     await state.update_data(zip_files=zip_files)
 
-    await message.answer(f"✅ Архив добавлен ({len(zip_files)} из загруженных). Можете загрузить ещё или нажать 'Готово'.")
+    await message.answer(f"✅ Архив добавлен ({len(zip_files)} загружено). Можете загрузить ещё или нажать 'Готово'.")
 
 async def finalize_landing_request(message: Message, state: FSMContext):
     data = await state.get_data()
