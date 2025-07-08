@@ -71,7 +71,7 @@ class Form(StatesGroup):
     writing_offer_name = State()
     writing_specification = State()
     entering_canvas_link = State()
-    uploading_zip_file = State()
+    uploading_multiple_zip_files = State()
     # unicalisation
     images_unicalization = State()
     unicalization_copies = State()
@@ -450,9 +450,9 @@ async def write_specification(message: Message, state: FSMContext):
             last_messages[message.from_user.id] = [msg.message_id]
             await state.set_state(Form.entering_canvas_link)
         else:
-            msg = await message.answer("Загрузите ZIP архив с файлами лендинга:", reply_markup=cancel_kb)
+            msg = await message.answer("Загрузите ZIP архивы с файлами лендинга (можно несколько).\nКогда закончите, нажмите 'Готово':", reply_markup=ready_kb)
             last_messages[message.from_user.id] = [msg.message_id]
-            await state.set_state(Form.uploading_zip_file)
+            await state.set_state(Form.uploading_multiple_zip_files)
         return
 
     data = await state.get_data()
@@ -499,45 +499,64 @@ async def enter_canvas_link(message: Message, state: FSMContext):
     # Сохраняем ссылку
     await state.update_data(canvas_link=message.text.strip())
 
-    msg = await message.answer("Загрузите ZIP архив с картинками:", reply_markup=cancel_kb)
+    msg = await message.answer(
+        "Загрузите ZIP архивы с картинками (можно несколько).\nКогда закончите, нажмите 'Готово':",
+        reply_markup=ready_kb
+    )
     last_messages[message.from_user.id] = [msg.message_id]
-    await state.set_state(Form.uploading_zip_file)
+    await state.set_state(Form.uploading_multiple_zip_files)
 
-@router.message(Form.uploading_zip_file)
-async def upload_zip_file(message: Message, state: FSMContext):
+@router.message(Form.uploading_multiple_zip_files)
+async def upload_multiple_zip_files(message: Message, state: FSMContext):
     # Проверяем, не отмена ли это
     if message.text and message.text == "❌ Отмена":
         await cancel_handler(message, state)
         return
         
-    data = await state.get_data()
-    landing_category = data.get("landing_category")
-        
-    text_message = "Пожалуйста, загрузите ZIP архив с картинками." if landing_category == "create" else "Пожалуйста, загрузите ZIP архив с лендингом."
-        
+    # Проверяем, готово ли
+    if message.text and message.text == "✅ Готово":
+        data = await state.get_data()
+        zip_files = data.get("zip_files", [])
+
+        if not zip_files:
+            await message.answer("❌ Необходимо загрузить хотя бы один ZIP архив перед завершением.")
+            return
+
+        # Переходим к отправке заявки
+        await finalize_landing_request(message, state)
+        return
+
     # Проверяем, что это документ
     if not message.document:
-        await message.answer(text_message)
+        await message.answer("Пожалуйста, загрузите ZIP архив или нажмите 'Готово' для завершения.")
         return
 
     # Проверяем, что это zip файл
     if message.document.mime_type != "application/zip":
-        await message.answer(text_message)
+        await message.answer("Пожалуйста, загрузите ZIP архив или нажмите 'Готово' для завершения.")
         return
 
-    # Сохраняем файл
-    await state.update_data(zip_file=message.document.file_id)
+    # Добавляем файл к списку
+    data = await state.get_data()
+    zip_files = data.get("zip_files", [])
+    zip_files.append(message.document.file_id)
+    await state.update_data(zip_files=zip_files)
 
+    await message.answer(f"✅ Архив добавлен ({len(zip_files)} из загруженных). Можете загрузить ещё или нажать 'Готово'.")
+
+async def finalize_landing_request(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = message.from_user.id
     username = message.from_user.username or "нет username"
     offer_name = data.get("offer_name")
+    landing_category = data.get("landing_category")
     category = "Создать лендинг" if landing_category == "create" else "Починить лендинг" if landing_category == "repair" else "Неизвестно"
     specification = data.get("specification")
     spec_images = data.get("spec_image_ids", [])
     spec_docs = data.get("spec_doc_ids", [])
     order_id = shortuuid.uuid()
     canvas_link = data.get("canvas_link") if landing_category == "create" else None
+    zip_files = data.get("zip_files", [])
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Взять в работу", callback_data=f"processing:{user_id}")],
@@ -545,9 +564,13 @@ async def upload_zip_file(message: Message, state: FSMContext):
     ])
         
     caption_text = "🖼️ Картинки" if landing_category == "create" else "📄 Лендинг"
-    zip_file = data.get("zip_file")
-    await bot.send_document(ADMIN_ID, document=zip_file, caption=caption_text)
 
+    # Отправляем все ZIP файлы
+    for i, zip_file_id in enumerate(zip_files, 1):
+        caption = f"{caption_text} ({i}/{len(zip_files)})" if len(zip_files) > 1 else caption_text
+        await bot.send_document(ADMIN_ID, document=zip_file_id, caption=caption)
+
+    # Отправляем изображения и документы из ТЗ
     for file_id in spec_images:
         await bot.send_photo(ADMIN_ID, file_id)
     for file_id in spec_docs:
@@ -558,10 +581,11 @@ async def upload_zip_file(message: Message, state: FSMContext):
         f"👤 От: @{username} (ID: {user_id})\n"
         f"📝 Оффер: {offer_name}\n"
         f"🔧 Категория: {category}\n"
+        f"📦 Количество архивов: {len(zip_files)}\n"
         f"📝 ТЗ: {specification}\n"
         f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}"
     )
-    
+
     await bot.send_message(
         ADMIN_ID,
         message_text,
