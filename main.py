@@ -446,7 +446,10 @@ async def videos_unicalization_initiation(message: Message, state: FSMContext):
     if not is_user_allowed(message.from_user.id):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
-    m1 = await message.answer("Загрузите видео для уникализации (одно видео)")
+    m1 = await message.answer(
+        "Загрузите видео для уникализации (одно видео)\n\n"
+        "⚠️ Ограничение: видео должно быть не более 20 МБ"
+    )
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.videos_unicalization)
@@ -462,6 +465,26 @@ async def receive_video(message: Message, state: FSMContext):
             message.video.file_id if message.video
             else message.document.file_id
         )
+        
+        # Проверяем размер файла сразу при загрузке
+        try:
+            file_info = await bot.get_file(file_id)
+            file_size_mb = file_info.file_size / (1024 * 1024) if file_info.file_size else 0
+            
+            # Telegram API может скачивать файлы только до 20 МБ
+            if file_size_mb > 20:
+                await message.answer(
+                    f"❌ Видео слишком большое ({file_size_mb:.1f} МБ).\n"
+                    f"Telegram API может обрабатывать видео только до 20 МБ.\n"
+                    f"Пожалуйста, загрузите видео меньшего размера.",
+                    reply_markup=cancel_kb
+                )
+                return
+                
+        except Exception as e:
+            await message.answer("❌ Не удалось получить информацию о видео файле. Попробуйте загрузить другой файл.", reply_markup=cancel_kb)
+            return
+        
         await state.update_data(video_unicalization_file_id=file_id)
         await message.answer("Введите количество уникализированных копий (например, 5):", reply_markup=cancel_kb)
         await state.set_state(Form.video_unicalization_copies)
@@ -485,6 +508,27 @@ async def receive_video_copy_count(message: Message, state: FSMContext, bot: Bot
 
     data = await state.get_data()
     video_unicalization_file_id = data.get("video_unicalization_file_id")
+
+    # Проверяем размер файла до попытки скачивания
+    try:
+        file_info = await bot.get_file(video_unicalization_file_id)
+        file_size_mb = file_info.file_size / (1024 * 1024) if file_info.file_size else 0
+        
+        # Telegram API может скачивать файлы только до 20 МБ
+        if file_size_mb > 20:
+            await message.answer(
+                f"❌ Файл слишком большой ({file_size_mb:.1f} МБ).\n"
+                f"Telegram API может обрабатывать видео только до 20 МБ.\n"
+                f"Пожалуйста, загрузите видео меньшего размера.",
+                reply_markup=menu_kb_user
+            )
+            await state.clear()
+            return
+            
+    except Exception as e:
+        await message.answer("❌ Не удалось получить информацию о файле. Попробуйте загрузить видео заново.")
+        await state.clear()
+        return
 
     await message.answer("🔄 Обрабатываю видео... Это может занять некоторое время.", reply_markup=cancel_kb)
     try:
