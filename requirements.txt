@@ -5,4 +5,4 @@ Pillow
 shortuuid
 bugsnag
 piexif
-moviepy==1.0.3
+moviepy
