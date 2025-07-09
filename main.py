@@ -490,23 +490,7 @@ async def receive_video_copy_count(message: Message, state: FSMContext, bot: Bot
     try:
         videos_zip = await process_video(bot, video_unicalization_file_id, message.chat.id, count)
         await bot.send_document(message.chat.id, document=videos_zip)
-        
-        # Проверяем, было ли уменьшено количество копий по имени файла
-        if "limited" in videos_zip.filename and "copies" in videos_zip.filename:
-            # Извлекаем фактическое количество копий из имени файла
-            import re
-            match = re.search(r'limited_(\d+)copies', videos_zip.filename)
-            if match:
-                actual_copies = int(match.group(1))
-                await message.answer(
-                    f"✅ Создано {actual_copies} копий видео.\n"
-                    f"ℹ️ Количество копий было автоматически уменьшено для соблюдения лимита размера Telegram (50 МБ).",
-                    reply_markup=menu_kb_user
-                )
-            else:
-                await message.answer(f"✅ Уникализировано видео (количество копий ограничено размером).", reply_markup=menu_kb_user)
-        else:
-            await message.answer(f"✅ Уникализировано {count} копий видео.", reply_markup=menu_kb_user)
+        await message.answer(f"✅ Уникализировано {count} копий видео.", reply_markup=menu_kb_user)
     except Exception as e:
         bugsnag.notify(e)
         await message.answer("❌ Произошла ошибка при обработке видео.")
@@ -523,12 +507,6 @@ async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
     # Проверяем размер исходного файла
     file_size_mb = len(file_content.getvalue()) / (1024 * 1024)
     
-    # Оцениваем максимально безопасное количество копий
-    if file_size_mb > 10:  # Для больших файлов сразу ограничиваем копии
-        max_safe_copies = max(1, min(copies, int(35 / file_size_mb)))
-        if max_safe_copies < copies:
-            copies = max_safe_copies
-    
     zip_buffer = BytesIO()
     
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -538,7 +516,6 @@ async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
             f.write(file_content.getvalue())
         
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zip_file:
-            actual_copies = 0
             for i in range(copies):
                 unique_file_name = generate_random_filename(ext='mp4')  # Всегда сохраняем как mp4
                 output_path = os.path.join(temp_dir, unique_file_name)
@@ -550,35 +527,32 @@ async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
                 if os.path.exists(output_path):
                     processed_size_mb = os.path.getsize(output_path) / (1024 * 1024)
                     
-                    # Если файл все еще слишком большой, сжимаем дополнительно
-                    if processed_size_mb > 3:  # Еще более строгий лимит
+                    # Если файл все еще слишком большой, сжимаем сильнее
+                    if processed_size_mb > 5:  # Уменьшили лимит с 8 до 5 МБ
                         compress_video_further(output_path, output_path)
-                        processed_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-                    
-                    # Проверяем, поместится ли файл в архив
-                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
-                    if current_zip_size + processed_size_mb > 35:  # Строгий лимит 35 МБ
-                        break
                     
                     # Добавляем в архив
                     with open(output_path, 'rb') as f:
                         zip_file.writestr(unique_file_name, f.read())
                     
-                    actual_copies += 1
+                    # Проверяем размер архива после добавления файла
+                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
+                    if current_zip_size > 40:  # Если архив больше 40 МБ, прерываем
+                        break
                     
                     # Удаляем временный файл
                     os.remove(output_path)
 
     zip_buffer.seek(0)
     
-    # Финальная проверка размера
+    # Проверяем размер итогового архива
     zip_size_mb = len(zip_buffer.getvalue()) / (1024 * 1024)
     
-    # Если архив все еще больше 40 МБ, то что-то пошло не так
-    if zip_size_mb > 40:
-        # Создаем архив с еще меньшим количеством копий
-        safe_copies = max(1, int(30 / file_size_mb))
-        return await process_video_with_limit(bot, file_id, user_id, safe_copies)
+    # Если архив больше 45 МБ, уменьшаем количество копий
+    if zip_size_mb > 45:
+        max_copies = max(1, int(40 * copies / zip_size_mb))  # Еще больше запаса
+        if max_copies < copies:
+            return await process_video_with_limit(bot, file_id, user_id, max_copies)
     
     zip_filename = f"videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
@@ -600,7 +574,6 @@ async def process_video_with_limit(bot: Bot, file_id: str, user_id: int, max_cop
             f.write(file_content.getvalue())
         
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zip_file:
-            actual_copies = 0
             for i in range(max_copies):
                 unique_file_name = generate_random_filename(ext='mp4')
                 output_path = os.path.join(temp_dir, unique_file_name)
@@ -608,25 +581,22 @@ async def process_video_with_limit(bot: Bot, file_id: str, user_id: int, max_cop
                 modify_video(original_path, output_path, file_size_mb)
                 
                 if os.path.exists(output_path):
-                    # Всегда применяем дополнительное сжатие для функции с ограничением
-                    compress_video_further(output_path, output_path)
-                    
-                    # Проверяем размер после сжатия
+                    # Дополнительное сжатие для файлов больше 3 МБ
                     file_size = os.path.getsize(output_path) / (1024 * 1024)
-                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
-                    
-                    # Если добавление этого файла превысит лимит, останавливаемся
-                    if current_zip_size + file_size > 30:  # Очень строгий лимит 30 МБ
-                        break
+                    if file_size > 3:
+                        compress_video_further(output_path, output_path)
                     
                     with open(output_path, 'rb') as f:
                         zip_file.writestr(unique_file_name, f.read())
                     
-                    actual_copies += 1
+                    # Проверяем размер архива
+                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
+                    if current_zip_size > 35:  # Еще более строгий лимит
+                        break
                     os.remove(output_path)
 
     zip_buffer.seek(0)
-    zip_filename = f"videos_limited_{actual_copies}copies_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    zip_filename = f"videos_compressed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
 
 def compress_video_further(input_path: str, output_path: str):
