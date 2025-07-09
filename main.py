@@ -504,6 +504,9 @@ async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
     name_parts = file_name.rsplit('.', 1)
     ext = name_parts[1] if len(name_parts) > 1 else 'mp4'
 
+    # Проверяем размер исходного файла
+    file_size_mb = len(file_content.getvalue()) / (1024 * 1024)
+    
     zip_buffer = BytesIO()
     
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -512,26 +515,122 @@ async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
         with open(original_path, 'wb') as f:
             f.write(file_content.getvalue())
         
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zip_file:
             for i in range(copies):
-                unique_file_name = generate_random_filename(ext=ext)
+                unique_file_name = generate_random_filename(ext='mp4')  # Всегда сохраняем как mp4
                 output_path = os.path.join(temp_dir, unique_file_name)
                 
-                # Обрабатываем видео
-                modify_video(original_path, output_path)
+                # Обрабатываем видео с учетом размера
+                modify_video(original_path, output_path, file_size_mb)
                 
-                # Добавляем в архив
-                with open(output_path, 'rb') as f:
-                    zip_file.writestr(unique_file_name, f.read())
-                
-                # Удаляем временный файл
-                os.remove(output_path)
+                # Проверяем размер обработанного файла
+                if os.path.exists(output_path):
+                    processed_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                    
+                    # Если файл все еще слишком большой, сжимаем сильнее
+                    if processed_size_mb > 5:  # Уменьшили лимит с 8 до 5 МБ
+                        compress_video_further(output_path, output_path)
+                    
+                    # Добавляем в архив
+                    with open(output_path, 'rb') as f:
+                        zip_file.writestr(unique_file_name, f.read())
+                    
+                    # Проверяем размер архива после добавления файла
+                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
+                    if current_zip_size > 40:  # Если архив больше 40 МБ, прерываем
+                        break
+                    
+                    # Удаляем временный файл
+                    os.remove(output_path)
 
     zip_buffer.seek(0)
+    
+    # Проверяем размер итогового архива
+    zip_size_mb = len(zip_buffer.getvalue()) / (1024 * 1024)
+    
+    # Если архив больше 45 МБ, уменьшаем количество копий
+    if zip_size_mb > 45:
+        max_copies = max(1, int(40 * copies / zip_size_mb))  # Еще больше запаса
+        if max_copies < copies:
+            return await process_video_with_limit(bot, file_id, user_id, max_copies)
+    
     zip_filename = f"videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
 
-def modify_video(input_path: str, output_path: str):
+async def process_video_with_limit(bot: Bot, file_id: str, user_id: int, max_copies: int) -> BufferedInputFile:
+    """Обрабатывает видео с ограниченным количеством копий для соблюдения лимита размера"""
+    file = await bot.get_file(file_id)
+    file_content = await bot.download_file(file.file_path)
+    file_name = file.file_path.split('/')[-1]
+    name_parts = file_name.rsplit('.', 1)
+    ext = name_parts[1] if len(name_parts) > 1 else 'mp4'
+    file_size_mb = len(file_content.getvalue()) / (1024 * 1024)
+
+    zip_buffer = BytesIO()
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        original_path = os.path.join(temp_dir, f"original.{ext}")
+        with open(original_path, 'wb') as f:
+            f.write(file_content.getvalue())
+        
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zip_file:
+            for i in range(max_copies):
+                unique_file_name = generate_random_filename(ext='mp4')
+                output_path = os.path.join(temp_dir, unique_file_name)
+                
+                modify_video(original_path, output_path, file_size_mb)
+                
+                if os.path.exists(output_path):
+                    # Дополнительное сжатие для файлов больше 3 МБ
+                    file_size = os.path.getsize(output_path) / (1024 * 1024)
+                    if file_size > 3:
+                        compress_video_further(output_path, output_path)
+                    
+                    with open(output_path, 'rb') as f:
+                        zip_file.writestr(unique_file_name, f.read())
+                    
+                    # Проверяем размер архива
+                    current_zip_size = zip_buffer.tell() / (1024 * 1024)
+                    if current_zip_size > 35:  # Еще более строгий лимит
+                        break
+                    os.remove(output_path)
+
+    zip_buffer.seek(0)
+    zip_filename = f"videos_compressed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
+
+def compress_video_further(input_path: str, output_path: str):
+    """Умеренное сжатие видео без потери качества"""
+    try:
+        clip = VideoFileClip(input_path)
+        
+        # Умеренные параметры сжатия - НЕ ухудшаем качество
+        quality_params = {
+            'codec': 'libx264',
+            'audio_codec': 'aac',
+            'temp_audiofile': None,
+            'remove_temp': True,
+            'preset': 'medium',  # Более качественное кодирование
+            'crf': 23,  # Хорошее качество
+            'audio_bitrate': '128k'  # Нормальный битрейт аудио
+        }
+        
+        # НЕ изменяем разрешение и FPS - сохраняем оригинальное качество
+        
+        clip.write_videofile(
+            output_path, 
+            **quality_params, 
+            verbose=False, 
+            logger=None,
+            ffmpeg_params=['-movflags', '+faststart']
+        )
+        clip.close()
+        
+    except Exception:
+        # В случае ошибки оставляем как есть
+        pass
+
+def modify_video(input_path: str, output_path: str, file_size_mb: float = 0):
     """Apply random modifications to video"""
     try:
         clip = VideoFileClip(input_path)
@@ -570,23 +669,19 @@ def modify_video(input_path: str, output_path: str):
                                x2=w-crop_pixels, y2=h-crop_pixels)
                 clip = clip.resize((w, h))
         
-        # Добавляем случайные метаданные через изменение качества
+        # Умеренные параметры сжатия без ухудшения качества
+        # Используем разные параметры кодирования для уникальности
         quality_params = {
             'codec': 'libx264',
             'audio_codec': 'aac',
             'temp_audiofile': None,
             'remove_temp': True,
-            'preset': random.choice(['ultrafast', 'fast', 'medium']),  # Разные пресеты
-            'crf': random.randint(18, 28)  # Разное качество сжатия
+            'preset': random.choice(['fast', 'medium', 'slow']),  # Разные пресеты для уникальности
+            'crf': random.randint(20, 25),  # Хорошее качество (20-25)
+            'audio_bitrate': random.choice(['128k', '160k', '192k'])  # Нормальный битрейт аудио
         }
         
-        # Случайные параметры кодирования для большей уникальности
-        bitrate_options = [
-            f"{random.randint(800, 1200)}k",
-            f"{random.randint(1200, 1800)}k", 
-            f"{random.randint(1800, 2500)}k"
-        ]
-        quality_params['bitrate'] = random.choice(bitrate_options)
+        # НЕ изменяем разрешение и FPS - сохраняем оригинальные параметры
         
         # Добавляем случайные ffmpeg параметры
         ffmpeg_params = ['-movflags', '+faststart']
