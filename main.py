@@ -35,9 +35,6 @@ import piexif
 from datetime import datetime
 import uuid
 import zipfile
-from moviepy.editor import VideoFileClip, concatenate_videoclips
-import tempfile
-import os
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
@@ -50,7 +47,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
-    [KeyboardButton(text="🖼️ Уникализатор"), KeyboardButton(text="🎬 Видео уникализатор")]
+    [KeyboardButton(text="🖼️ Уникализатор")]
 ])
 
 menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -78,9 +75,6 @@ class Form(StatesGroup):
     # unicalisation
     images_unicalization = State()
     unicalization_copies = State()
-    # video unicalization  
-    videos_unicalization = State()
-    video_unicalization_copies = State()
     # broadcast
     broadcast_collecting = State()
 
@@ -440,152 +434,6 @@ def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     # No need to save and reopen the image here - we'll return the processed image
     # and its format, and let the caller save it with the appropriate parameters
     return img, img_format
-
-@router.message(F.text == "🎬 Видео уникализатор")
-async def videos_unicalization_initiation(message: Message, state: FSMContext):
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
-    m1 = await message.answer("Загрузите видео для уникализации (одно видео)")
-    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
-    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
-    await state.set_state(Form.videos_unicalization)
-
-@router.message(Form.videos_unicalization)
-async def receive_video(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await cancel_handler(message, state)
-        return
-
-    if message.video or (message.document and message.document.mime_type.startswith('video/')):
-        file_id = (
-            message.video.file_id if message.video
-            else message.document.file_id
-        )
-        await state.update_data(video_unicalization_file_id=file_id)
-        await message.answer("Введите количество уникализированных копий (например, 5):", reply_markup=cancel_kb)
-        await state.set_state(Form.video_unicalization_copies)
-    else:
-        await message.answer("❌ Пожалуйста, отправьте видео файл.", reply_markup=cancel_kb)
-
-@router.message(Form.video_unicalization_copies)
-async def receive_video_copy_count(message: Message, state: FSMContext, bot: Bot):
-    if message.text == "❌ Отмена":
-        await cancel_handler(message, state)
-        return
-
-    if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("❌ Введите корректное положительное число копий.", reply_markup=cancel_kb)
-        return
-
-    count = int(message.text)
-    if count > 20:
-        await message.answer("⚠️ Нельзя создать более 20 копий видео за раз. Пожалуйста, введите число от 1 до 20.", reply_markup=cancel_kb)
-        return
-
-    data = await state.get_data()
-    video_unicalization_file_id = data.get("video_unicalization_file_id")
-
-    await message.answer("🔄 Обрабатываю видео... Это может занять некоторое время.", reply_markup=cancel_kb)
-    try:
-        videos_zip = await process_video(bot, video_unicalization_file_id, message.chat.id, count)
-        await bot.send_document(message.chat.id, document=videos_zip)
-        await message.answer(f"✅ Уникализировано {count} копий видео.", reply_markup=menu_kb_user)
-    except Exception as e:
-        bugsnag.notify(e)
-        await message.answer("❌ Произошла ошибка при обработке видео.")
-
-    await state.clear()
-
-async def process_video(bot: Bot, file_id: str, user_id: int, copies: int) -> BufferedInputFile:
-    file = await bot.get_file(file_id)
-    file_content = await bot.download_file(file.file_path)
-    file_name = file.file_path.split('/')[-1]
-    name_parts = file_name.rsplit('.', 1)
-    ext = name_parts[1] if len(name_parts) > 1 else 'mp4'
-
-    zip_buffer = BytesIO()
-    
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Сохраняем оригинальное видео во временной директории
-        original_path = os.path.join(temp_dir, f"original.{ext}")
-        with open(original_path, 'wb') as f:
-            f.write(file_content.getvalue())
-        
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for i in range(copies):
-                unique_file_name = generate_random_filename(ext=ext)
-                output_path = os.path.join(temp_dir, unique_file_name)
-                
-                # Обрабатываем видео
-                modify_video(original_path, output_path)
-                
-                # Добавляем в архив
-                with open(output_path, 'rb') as f:
-                    zip_file.writestr(unique_file_name, f.read())
-                
-                # Удаляем временный файл
-                os.remove(output_path)
-
-    zip_buffer.seek(0)
-    zip_filename = f"videos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-    return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
-
-def modify_video(input_path: str, output_path: str):
-    """Apply random modifications to video"""
-    try:
-        clip = VideoFileClip(input_path)
-        
-        # Применяем случайные модификации
-        modification_type = random.choice(['speed', 'brightness', 'contrast', 'gamma', 'crop_resize'])
-        
-        if modification_type == 'speed':
-            # Незначительное изменение скорости (99%-101%)
-            speed_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('speedx', speed_factor)
-            
-        elif modification_type == 'brightness':
-            # Незначительное изменение яркости
-            brightness_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('colorx', brightness_factor)
-            
-        elif modification_type == 'contrast':
-            # Незначительное изменение контраста через gamma
-            gamma_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('gamma_corr', gamma_factor)
-            
-        elif modification_type == 'gamma':
-            # Изменение гаммы
-            gamma_value = random.uniform(0.98, 1.02)
-            clip = clip.fx('gamma_corr', gamma_value)
-            
-        elif modification_type == 'crop_resize':
-            # Незначительное изменение размера (обрезка и ресайз обратно)
-            w, h = clip.size
-            crop_pixels = random.randint(1, 3)
-            clip = clip.crop(x1=crop_pixels, y1=crop_pixels, 
-                           x2=w-crop_pixels, y2=h-crop_pixels)
-            clip = clip.resize((w, h))
-        
-        # Добавляем случайные метаданные через изменение качества
-        quality_params = {
-            'codec': 'libx264',
-            'audio_codec': 'aac',
-            'temp_audiofile': None,
-            'remove_temp': True
-        }
-        
-        # Случайные параметры кодирования
-        if random.choice([True, False]):
-            quality_params['bitrate'] = f"{random.randint(1000, 2000)}k"
-        
-        clip.write_videofile(output_path, **quality_params, verbose=False, logger=None)
-        clip.close()
-        
-    except Exception as e:
-        # В случае ошибки просто копируем файл
-        import shutil
-        shutil.copy2(input_path, output_path)
 
 @router.message(Form.writing_specification)
 async def write_specification(message: Message, state: FSMContext):
