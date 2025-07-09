@@ -536,50 +536,70 @@ def modify_video(input_path: str, output_path: str):
     try:
         clip = VideoFileClip(input_path)
         
-        # Применяем случайные модификации
-        modification_type = random.choice(['speed', 'brightness', 'contrast', 'gamma', 'crop_resize'])
+        # Применяем НЕСКОЛЬКО случайных модификаций для большей уникальности
+        modifications = ['speed', 'brightness', 'contrast', 'gamma', 'crop_resize']
+        num_modifications = random.randint(2, 3)  # Применяем 2-3 модификации
+        selected_mods = random.sample(modifications, num_modifications)
         
-        if modification_type == 'speed':
-            # Незначительное изменение скорости (99%-101%)
-            speed_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('speedx', speed_factor)
-            
-        elif modification_type == 'brightness':
-            # Незначительное изменение яркости
-            brightness_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('colorx', brightness_factor)
-            
-        elif modification_type == 'contrast':
-            # Незначительное изменение контраста через gamma
-            gamma_factor = random.uniform(0.99, 1.01)
-            clip = clip.fx('gamma_corr', gamma_factor)
-            
-        elif modification_type == 'gamma':
-            # Изменение гаммы
-            gamma_value = random.uniform(0.98, 1.02)
-            clip = clip.fx('gamma_corr', gamma_value)
-            
-        elif modification_type == 'crop_resize':
-            # Незначительное изменение размера (обрезка и ресайз обратно)
-            w, h = clip.size
-            crop_pixels = random.randint(1, 3)
-            clip = clip.crop(x1=crop_pixels, y1=crop_pixels, 
-                           x2=w-crop_pixels, y2=h-crop_pixels)
-            clip = clip.resize((w, h))
+        for modification_type in selected_mods:
+            if modification_type == 'speed':
+                # Незначительное изменение скорости (98%-102%)
+                speed_factor = random.uniform(0.98, 1.02)
+                clip = clip.fx('speedx', speed_factor)
+                
+            elif modification_type == 'brightness':
+                # Незначительное изменение яркости
+                brightness_factor = random.uniform(0.97, 1.03)
+                clip = clip.fx('colorx', brightness_factor)
+                
+            elif modification_type == 'contrast':
+                # Незначительное изменение контраста через gamma
+                gamma_factor = random.uniform(0.97, 1.03)
+                clip = clip.fx('gamma_corr', gamma_factor)
+                
+            elif modification_type == 'gamma':
+                # Изменение гаммы
+                gamma_value = random.uniform(0.95, 1.05)
+                clip = clip.fx('gamma_corr', gamma_value)
+                
+            elif modification_type == 'crop_resize':
+                # Незначительное изменение размера (обрезка и ресайз обратно)
+                w, h = clip.size
+                crop_pixels = random.randint(2, 5)
+                clip = clip.crop(x1=crop_pixels, y1=crop_pixels, 
+                               x2=w-crop_pixels, y2=h-crop_pixels)
+                clip = clip.resize((w, h))
         
         # Добавляем случайные метаданные через изменение качества
         quality_params = {
             'codec': 'libx264',
             'audio_codec': 'aac',
             'temp_audiofile': None,
-            'remove_temp': True
+            'remove_temp': True,
+            'preset': random.choice(['ultrafast', 'fast', 'medium']),  # Разные пресеты
+            'crf': random.randint(18, 28)  # Разное качество сжатия
         }
         
-        # Случайные параметры кодирования
-        if random.choice([True, False]):
-            quality_params['bitrate'] = f"{random.randint(1000, 2000)}k"
+        # Случайные параметры кодирования для большей уникальности
+        bitrate_options = [
+            f"{random.randint(800, 1200)}k",
+            f"{random.randint(1200, 1800)}k", 
+            f"{random.randint(1800, 2500)}k"
+        ]
+        quality_params['bitrate'] = random.choice(bitrate_options)
         
-        clip.write_videofile(output_path, **quality_params, verbose=False, logger=None)
+        # Добавляем случайные ffmpeg параметры
+        ffmpeg_params = ['-movflags', '+faststart']
+        if random.choice([True, False]):
+            ffmpeg_params.extend(['-tune', random.choice(['film', 'animation', 'grain'])])
+        
+        clip.write_videofile(
+            output_path, 
+            **quality_params, 
+            verbose=False, 
+            logger=None,
+            ffmpeg_params=ffmpeg_params
+        )
         clip.close()
         
     except Exception as e:
