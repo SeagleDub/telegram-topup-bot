@@ -52,11 +52,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📊 Добавить пиксель в систему")]
 ])
 
-menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="📢 Сделать рассылку")]
-])
-
-menu_kb_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📢 Сделать рассылку")],
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
@@ -98,9 +94,9 @@ linked_messages = {}  # Словарь для связывания сообще�
 @router.message(Command("start"))
 async def send_welcome(message: Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Админ-панель:", reply_markup=menu_kb_admin)
+        await message.answer("👑 Админ-панель:", reply_markup=menu_kb_admin_teamleader)
     elif message.from_user.id == TEAMLEADER_ID:
-        await message.answer("👨‍💼 Тимлидер-панель:", reply_markup=menu_kb_teamleader)
+        await message.answer("👨‍💼 Тимлидер-панель:", reply_markup=menu_kb_admin_teamleader)
     else:
         await message.answer("Выберите действие:", reply_markup=menu_kb_user)
 
@@ -147,12 +143,15 @@ async def send_broadcast(message: Message, state: FSMContext):
     success_count = 0
     fail_count = 0
 
+    # Определяем от кого рассылка
+    sender_name = "👑 админа" if message.from_user.id == ADMIN_ID else "👨‍💼 тимлидера"
+
     for user_id in user_ids:
         user_success = True
         try:
             await bot.send_message(
                 user_id,
-                text="*📢 Сообщение от админа*",
+                text=f"*📢 Сообщение от {sender_name}*",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -986,10 +985,8 @@ def is_user_allowed(user_id: int) -> bool:
 
 def get_menu_keyboard(user_id: int):
     """Возвращает подходящую клавиатуру в зависимости от типа пользователя"""
-    if user_id == ADMIN_ID:
-        return menu_kb_admin
-    elif user_id == TEAMLEADER_ID:
-        return menu_kb_teamleader
+    if user_id == ADMIN_ID or user_id == TEAMLEADER_ID:
+        return menu_kb_admin_teamleader
     else:
         return menu_kb_user
 
