@@ -325,13 +325,9 @@ async def receive_pixel_id(message: Message, state: FSMContext):
         await message.answer("❌ Pixel ID не может быть пустым. Пожалуйста, введите корректный Pixel ID.", reply_markup=cancel_kb)
         return
     
-    # Валидация Pixel ID (обычно 15-16 цифр для Facebook пикселей)
+    # Валидация Pixel ID (только цифры)
     if not pixel_id.isdigit():
         await message.answer("❌ Pixel ID должен содержать только цифры. Пример: 123456789012345", reply_markup=cancel_kb)
-        return
-    
-    if len(pixel_id) < 10 or len(pixel_id) > 20:
-        await message.answer("❌ Pixel ID должен содержать от 10 до 20 цифр. Пример: 123456789012345", reply_markup=cancel_kb)
         return
 
     await state.update_data(pixel_id=pixel_id)
@@ -349,15 +345,9 @@ async def receive_pixel_key(message: Message, state: FSMContext):
         await message.answer("❌ Pixel Key не может быть пустым. Пожалуйста, введите корректный Pixel Key.", reply_markup=cancel_kb)
         return
     
-    # Валидация Pixel Key
-    # Проверяем, что ключ содержит только допустимые символы (буквы, цифры, дефисы, подчеркивания)
+    # Валидация Pixel Key (буквы, цифры, дефисы, подчеркивания)
     if not re.match(r'^[a-zA-Z0-9_-]+$', pixel_key):
         await message.answer("❌ Pixel Key может содержать только буквы, цифры, дефисы и подчеркивания.", reply_markup=cancel_kb)
-        return
-    
-    # Проверяем длину ключа (обычно от 8 до 64 символов)
-    if len(pixel_key) < 8 or len(pixel_key) > 64:
-        await message.answer("❌ Pixel Key должен содержать от 8 до 64 символов.", reply_markup=cancel_kb)
         return
 
     data = await state.get_data()
