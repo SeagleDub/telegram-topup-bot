@@ -57,8 +57,8 @@ menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 ])
 
 menu_kb_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="� Сделать рассылку")],
-    [KeyboardButton(text="�💰 Заказать пополнение")],
+    [KeyboardButton(text="📢 Сделать рассылку")],
+    [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
@@ -692,7 +692,7 @@ async def finalize_landing_request(message: Message, state: FSMContext):
         f"🔧 Категория: {category}\n"
         f"📦 Количество архивов: {len(zip_files)}\n"
         f"📝 ТЗ: {specification}\n"
-        f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}"
+        + (f"🔗 Ссылка на Canvas: {canvas_link}\n" if canvas_link else "")
     )
 
     await send_notification_with_buttons(
