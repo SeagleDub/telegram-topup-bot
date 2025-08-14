@@ -8,6 +8,7 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
 BUGSNAG_TOKEN = os.getenv("BUGSNAG_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))
 
 bugsnag.configure(
     api_key=BUGSNAG_TOKEN
@@ -52,8 +53,12 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 ])
 
 menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="📢 Сделать рассылку")],
-    [KeyboardButton(text="💰 Заказать пополнение")],
+    [KeyboardButton(text="📢 Сделать рассылку")]
+])
+
+menu_kb_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+    [KeyboardButton(text="� Сделать рассылку")],
+    [KeyboardButton(text="�💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
@@ -88,17 +93,20 @@ class Form(StatesGroup):
     entering_pixel_key = State()
 
 last_messages = {}
+linked_messages = {}  # Словарь для связывания сообщений админа и тимлидера
 
 @router.message(Command("start"))
 async def send_welcome(message: Message):
     if message.from_user.id == ADMIN_ID:
         await message.answer("👑 Админ-панель:", reply_markup=menu_kb_admin)
+    elif message.from_user.id == TEAMLEADER_ID:
+        await message.answer("👨‍💼 Тимлидер-панель:", reply_markup=menu_kb_teamleader)
     else:
         await message.answer("Выберите действие:", reply_markup=menu_kb_user)
 
 @router.message(F.text == "📢 Сделать рассылку")
 async def admin_broadcast_start(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id != ADMIN_ID and message.from_user.id != TEAMLEADER_ID:
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     
@@ -125,14 +133,14 @@ async def send_broadcast(message: Message, state: FSMContext):
     messages = data.get("broadcast_messages", [])
 
     if not messages:
-        await message.answer("⚠️ Список сообщений пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
+        await message.answer("⚠️ Список сообщений пуст. Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
         await state.clear()
         return
 
     user_ids = get_user_ids_from_sheet()
 
     if not user_ids:
-        await message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=menu_kb_admin)
+        await message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
         await state.clear()
         return
 
@@ -169,14 +177,14 @@ async def send_broadcast(message: Message, state: FSMContext):
         f"✅ Рассылка завершена.\n"
         f"Отправлено: {success_count}\n"
         f"Не доставлено: {fail_count}",
-        reply_markup=menu_kb_admin
+        reply_markup=get_menu_keyboard(message.from_user.id)
     )
     await state.clear()
 
 @router.message(Form.broadcast_collecting, F.text == "❌ Отмена")
 async def cancel_broadcast(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Рассылка отменена.", reply_markup=menu_kb_admin)
+    await message.answer("Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
 
 @router.message(Form.broadcast_collecting)
 async def collect_broadcast_messages(message: Message, state: FSMContext):
@@ -367,9 +375,8 @@ async def receive_pixel_key(message: Message, state: FSMContext):
         # Добавляем новую строку с Pixel ID и Pixel Key
         worksheet.append_row([pixel_id, pixel_key])
         
-        # Уведомляем администратора о добавлении нового пикселя
-        await bot.send_message(
-            ADMIN_ID,
+        # Уведомляем администратора и тимлидера о добавлении нового пикселя
+        await send_notification_to_admins(
             f"🔔 Новый пиксель добавлен в систему\n"
             f"👤 От: @{username} (ID: {user_id})\n"
             f"📊 Pixel ID: {pixel_id}\n"
@@ -670,13 +677,13 @@ async def finalize_landing_request(message: Message, state: FSMContext):
     # Отправляем все ZIP файлы
     for i, zip_file_id in enumerate(zip_files, 1):
         caption = f"{caption_text} ({i}/{len(zip_files)})" if len(zip_files) > 1 else caption_text
-        await bot.send_document(ADMIN_ID, document=zip_file_id, caption=caption)
+        await send_document_to_admins(document=zip_file_id, caption=caption)
 
     # Отправляем изображения и документы из ТЗ
     for file_id in spec_images:
-        await bot.send_photo(ADMIN_ID, file_id)
+        await send_photo_to_admins(file_id)
     for file_id in spec_docs:
-        await bot.send_document(ADMIN_ID, file_id)
+        await send_document_to_admins(document=file_id)
         
     message_text = (
         f"🆔 Заявка: {order_id}\n"
@@ -688,8 +695,7 @@ async def finalize_landing_request(message: Message, state: FSMContext):
         f"{f'🔗 Ссылка на Canvas: {canvas_link}\n' if canvas_link else ''}"
     )
 
-    await bot.send_message(
-        ADMIN_ID,
+    await send_notification_with_buttons(
         message_text,
         reply_markup=kb
     )
@@ -766,8 +772,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
          InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
 
-    await bot.send_message(
-        ADMIN_ID,
+    await send_notification_with_buttons(
         f"🔔 Новая заявка от @{username} (ID: {user_id})\n"
         f"🏦 Банк: {bank}\n"
         f"💳 Сумма: {amount}\n"
@@ -855,8 +860,7 @@ async def get_account_quantity(message: Message, state: FSMContext):
          InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
     
-    await bot.send_message(
-        ADMIN_ID,
+    await send_notification_with_buttons(
         f"🔔 Новый запрос на расходники от @{username} (ID: {user_id})\n"
         f"📁 Тип: Аккаунты\n"
         f"🔑 Платформа: {account_type_text}\n"
@@ -889,8 +893,7 @@ async def get_domain_quantity(message: Message, state: FSMContext):
          InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
     
-    await bot.send_message(
-        ADMIN_ID,
+    await send_notification_with_buttons(
         f"🔔 Новый запрос на расходники от @{username} (ID: {user_id})\n"
         f"📁 Тип: Домены\n"
         f"🔢 Количество: {quantity}",
@@ -910,9 +913,12 @@ async def approve_request(query: CallbackQuery):
         "✅ Ваша заявка одобрена и выполнена администратором."
     )
     
-    await query.message.edit_text(
-        f"{query.message.text}\n\n✅ ВЫПОЛНЕНО"
-    )
+    updated_text = f"{query.message.text}\n\n✅ ВЫПОЛНЕНО"
+    await query.message.edit_text(updated_text)
+    
+    # Обновляем связанное сообщение у другого админа
+    await update_linked_messages(query.message.chat.id, query.message.message_id, updated_text)
+    
     await query.answer("Пользователь уведомлен об одобрении")
     
 @router.callback_query(F.data.startswith("processing:"))
@@ -925,9 +931,12 @@ async def processing_request(query: CallbackQuery):
         "✅ Ваша заявка рассмотрена и взята в работу."
     )
     
-    await query.message.edit_text(
-        f"{query.message.text}\n\n✅ В РАБОТЕ"
-    )
+    updated_text = f"{query.message.text}\n\n✅ В РАБОТЕ"
+    await query.message.edit_text(updated_text)
+    
+    # Обновляем связанное сообщение у другого админа
+    await update_linked_messages(query.message.chat.id, query.message.message_id, updated_text)
+    
     await query.answer("Пользователь уведомлен о взятии в работу")
 
 @router.callback_query(F.data.startswith("decline:"))
@@ -940,9 +949,12 @@ async def decline_request(query: CallbackQuery):
         "❌ Ваша заявка отклонена администратором."
     )
     
-    await query.message.edit_text(
-        f"{query.message.text}\n\n❌ ОТКЛОНЕНО"
-    )
+    updated_text = f"{query.message.text}\n\n❌ ОТКЛОНЕНО"
+    await query.message.edit_text(updated_text)
+    
+    # Обновляем связанное сообщение у другого админа
+    await update_linked_messages(query.message.chat.id, query.message.message_id, updated_text)
+    
     await query.answer("Пользователь уведомлен об отклонении")
 
 @router.message(F.text == "❌ Отмена")
@@ -962,8 +974,8 @@ async def delete_last_messages(user_id, current_message):
     last_messages[user_id] = []
 
 def is_user_allowed(user_id: int) -> bool:
-    # Администратор всегда имеет доступ ко всем функциям
-    if user_id == ADMIN_ID:
+    # Администратор и тимлидер всегда имеют доступ ко всем функциям
+    if user_id == ADMIN_ID or user_id == TEAMLEADER_ID:
         return True
     
     user_ids = get_user_ids_from_sheet()
@@ -976,8 +988,57 @@ def get_menu_keyboard(user_id: int):
     """Возвращает подходящую клавиатуру в зависимости от типа пользователя"""
     if user_id == ADMIN_ID:
         return menu_kb_admin
+    elif user_id == TEAMLEADER_ID:
+        return menu_kb_teamleader
     else:
         return menu_kb_user
+
+async def send_notification_to_admins(message_text: str, reply_markup=None):
+    """Отправляет уведомление админу и тимлидеру"""
+    # Отправляем админу
+    admin_msg = await bot.send_message(ADMIN_ID, message_text, reply_markup=reply_markup)
+    # Отправляем тимлидеру
+    teamleader_msg = await bot.send_message(TEAMLEADER_ID, message_text, reply_markup=reply_markup)
+    return {"admin": admin_msg.message_id, "teamleader": teamleader_msg.message_id}
+
+async def send_document_to_admins(document, caption=None):
+    """Отправляет документ админу и тимлидеру"""
+    await bot.send_document(ADMIN_ID, document=document, caption=caption)
+    await bot.send_document(TEAMLEADER_ID, document=document, caption=caption)
+
+async def send_photo_to_admins(photo):
+    """Отправляет фото админу и тимлидеру"""
+    await bot.send_photo(ADMIN_ID, photo)
+    await bot.send_photo(TEAMLEADER_ID, photo)
+
+async def update_linked_messages(current_chat_id: int, current_message_id: int, new_text: str):
+    """Обновляет связанное сообщение у другого админа"""
+    current_key = f"{current_chat_id}:{current_message_id}"
+    if current_key in linked_messages:
+        linked_key = linked_messages[current_key]
+        chat_id, message_id = linked_key.split(":")
+        try:
+            await bot.edit_message_text(
+                chat_id=int(chat_id),
+                message_id=int(message_id),
+                text=new_text
+            )
+        except Exception as e:
+            print(f"Ошибка при обновлении связанного сообщения: {e}")
+        
+        # Удаляем обе записи из словаря после обработки
+        del linked_messages[current_key]
+        del linked_messages[linked_key]
+
+async def send_notification_with_buttons(message_text: str, reply_markup):
+    """Отправляет уведомление с кнопками админу и тимлидеру, сохраняет связи между сообщениями"""
+    message_ids = await send_notification_to_admins(message_text, reply_markup=reply_markup)
+    
+    # Сохраняем связь между сообщениями
+    admin_msg_id = message_ids["admin"]
+    teamleader_msg_id = message_ids["teamleader"]
+    linked_messages[f"{ADMIN_ID}:{admin_msg_id}"] = f"{TEAMLEADER_ID}:{teamleader_msg_id}"
+    linked_messages[f"{TEAMLEADER_ID}:{teamleader_msg_id}"] = f"{ADMIN_ID}:{admin_msg_id}"
 
 def get_user_ids_from_sheet() -> list[int]:
     gc = gspread.service_account(filename='credentials.json')
