@@ -47,7 +47,8 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
-    [KeyboardButton(text="🖼️ Уникализатор")]
+    [KeyboardButton(text="🖼️ Уникализатор")],
+    [KeyboardButton(text="📊 Добавить пиксель в систему")]
 ])
 
 menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -77,6 +78,9 @@ class Form(StatesGroup):
     unicalization_copies = State()
     # broadcast
     broadcast_collecting = State()
+    # pixel system
+    entering_pixel_id = State()
+    entering_pixel_key = State()
 
 last_messages = {}
 
@@ -284,6 +288,99 @@ async def receive_copy_count(message: Message, state: FSMContext, bot: Bot):
     except Exception as e:
         bugsnag.notify(e)
         await message.answer("❌ Произошла ошибка при обработке изображения.")
+
+    await state.clear()
+
+@router.message(F.text == "📊 Добавить пиксель в систему")
+async def add_pixel_to_system(message: Message, state: FSMContext):
+    if not is_user_allowed(message.from_user.id):
+        await message.answer("❌ У вас нет доступа к этой функции.")
+        return
+    
+    m1 = await message.answer("Введите Pixel ID:")
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.entering_pixel_id)
+
+@router.message(Form.entering_pixel_id)
+async def receive_pixel_id(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    pixel_id = message.text.strip()
+    if not pixel_id:
+        await message.answer("❌ Pixel ID не может быть пустым. Пожалуйста, введите корректный Pixel ID.", reply_markup=cancel_kb)
+        return
+    
+    # Валидация Pixel ID (обычно 15-16 цифр для Facebook пикселей)
+    if not pixel_id.isdigit():
+        await message.answer("❌ Pixel ID должен содержать только цифры. Пример: 123456789012345", reply_markup=cancel_kb)
+        return
+    
+    if len(pixel_id) < 10 or len(pixel_id) > 20:
+        await message.answer("❌ Pixel ID должен содержать от 10 до 20 цифр. Пример: 123456789012345", reply_markup=cancel_kb)
+        return
+
+    await state.update_data(pixel_id=pixel_id)
+    await message.answer("Введите Pixel Key:", reply_markup=cancel_kb)
+    await state.set_state(Form.entering_pixel_key)
+
+@router.message(Form.entering_pixel_key)
+async def receive_pixel_key(message: Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await cancel_handler(message, state)
+        return
+
+    pixel_key = message.text.strip()
+    if not pixel_key:
+        await message.answer("❌ Pixel Key не может быть пустым. Пожалуйста, введите корректный Pixel Key.", reply_markup=cancel_kb)
+        return
+    
+    # Валидация Pixel Key
+    # Проверяем, что ключ содержит только допустимые символы (буквы, цифры, дефисы, подчеркивания)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', pixel_key):
+        await message.answer("❌ Pixel Key может содержать только буквы, цифры, дефисы и подчеркивания.", reply_markup=cancel_kb)
+        return
+    
+    # Проверяем длину ключа (обычно от 8 до 64 символов)
+    if len(pixel_key) < 8 or len(pixel_key) > 64:
+        await message.answer("❌ Pixel Key должен содержать от 8 до 64 символов.", reply_markup=cancel_kb)
+        return
+
+    data = await state.get_data()
+    pixel_id = data.get("pixel_id")
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет username"
+    
+    try:
+        # Добавляем пиксель в Google таблицу
+        gc = gspread.service_account(filename='credentials.json')
+        table = gc.open_by_key(GOOGLE_SHEET_ID)
+        worksheet = table.get_worksheet(2)
+        
+        # Добавляем новую строку с Pixel ID и Pixel Key
+        worksheet.append_row([pixel_id, pixel_key])
+        
+        # Уведомляем администратора о добавлении нового пикселя
+        await bot.send_message(
+            ADMIN_ID,
+            f"🔔 Новый пиксель добавлен в систему\n"
+            f"👤 От: @{username} (ID: {user_id})\n"
+            f"📊 Pixel ID: {pixel_id}\n"
+            f"🔑 Pixel Key: {pixel_key}"
+        )
+        
+        await message.answer(
+            f"✅ Пиксель успешно добавлен в систему!\n"
+            f"📊 Pixel ID: {pixel_id}\n"
+            f"🔑 Pixel Key: {pixel_key}",
+            reply_markup=menu_kb_user
+        )
+        
+    except Exception as e:
+        bugsnag.notify(e)
+        await message.answer("❌ Произошла ошибка при добавлении пикселя в систему. Попробуйте еще раз.", reply_markup=menu_kb_user)
 
     await state.clear()
 
