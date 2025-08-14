@@ -52,7 +52,12 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 ])
 
 menu_kb_admin = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="📢 Сделать рассылку")]
+    [KeyboardButton(text="📢 Сделать рассылку")],
+    [KeyboardButton(text="💰 Заказать пополнение")],
+    [KeyboardButton(text="📂 Запросить расходники")],
+    [KeyboardButton(text="🌐 Создать/починить лендинг")],
+    [KeyboardButton(text="🖼️ Уникализатор")],
+    [KeyboardButton(text="📊 Добавить пиксель в систему")]
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
@@ -284,7 +289,7 @@ async def receive_copy_count(message: Message, state: FSMContext, bot: Bot):
     try:
         images_zip = await process_image(bot, unicalization_file_id, message.chat.id, count)
         await bot.send_document(message.chat.id, document=images_zip)
-        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=menu_kb_user)
+        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=get_menu_keyboard(message.chat.id))
     except Exception as e:
         bugsnag.notify(e)
         await message.answer("❌ Произошла ошибка при обработке изображения.")
@@ -375,12 +380,12 @@ async def receive_pixel_key(message: Message, state: FSMContext):
             f"✅ Пиксель успешно добавлен в систему!\n"
             f"📊 Pixel ID: {pixel_id}\n"
             f"🔑 Pixel Key: {pixel_key}",
-            reply_markup=menu_kb_user
+            reply_markup=get_menu_keyboard(message.from_user.id)
         )
         
     except Exception as e:
         bugsnag.notify(e)
-        await message.answer("❌ Произошла ошибка при добавлении пикселя в систему. Попробуйте еще раз.", reply_markup=menu_kb_user)
+        await message.answer("❌ Произошла ошибка при добавлении пикселя в систему. Попробуйте еще раз.", reply_markup=get_menu_keyboard(message.from_user.id))
 
     await state.clear()
 
@@ -694,7 +699,7 @@ async def finalize_landing_request(message: Message, state: FSMContext):
     worksheet = table.get_worksheet(0)
     worksheet.append_row([order_id, username, user_id, offer_name, category, specification, canvas_link])
     
-    await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer(f"Ваша заявка {order_id} отправлена администратору.", reply_markup=get_menu_keyboard(message.from_user.id))
     await state.clear()
 
 @router.message(F.text == "💰 Заказать пополнение")
@@ -769,7 +774,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
         f"📌 Тип: {topup_type_text}",
         reply_markup=kb
     )
-    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await query.message.answer("Ваша заявка отправлена администратору.", reply_markup=get_menu_keyboard(query.from_user.id))
     await state.clear()
     await query.answer()
 
@@ -859,7 +864,7 @@ async def get_account_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=get_menu_keyboard(message.from_user.id))
     await state.clear()
 
 @router.message(Form.entering_domain_quantity)
@@ -892,7 +897,7 @@ async def get_domain_quantity(message: Message, state: FSMContext):
         reply_markup=kb
     )
     
-    await message.answer("Ваша заявка отправлена администратору.", reply_markup=menu_kb_user)
+    await message.answer("Ваша заявка отправлена администратору.", reply_markup=get_menu_keyboard(message.from_user.id))
     await state.clear()
 
 @router.callback_query(F.data.startswith("approve:"))
@@ -944,7 +949,8 @@ async def decline_request(query: CallbackQuery):
 async def cancel_handler(message: Message, state: FSMContext):
     await delete_last_messages(message.from_user.id, message)
     await state.clear()
-    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb_user)
+    menu_kb = get_menu_keyboard(message.from_user.id)
+    await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=menu_kb)
 
 async def delete_last_messages(user_id, current_message):
     ids = last_messages.get(user_id, [])
@@ -956,11 +962,22 @@ async def delete_last_messages(user_id, current_message):
     last_messages[user_id] = []
 
 def is_user_allowed(user_id: int) -> bool:
+    # Администратор всегда имеет доступ ко всем функциям
+    if user_id == ADMIN_ID:
+        return True
+    
     user_ids = get_user_ids_from_sheet()
     if not user_ids:
         return False  # Если список пуст, доступ запрещен
 
     return user_id in user_ids
+
+def get_menu_keyboard(user_id: int):
+    """Возвращает подходящую клавиатуру в зависимости от типа пользователя"""
+    if user_id == ADMIN_ID:
+        return menu_kb_admin
+    else:
+        return menu_kb_user
 
 def get_user_ids_from_sheet() -> list[int]:
     gc = gspread.service_account(filename='credentials.json')
