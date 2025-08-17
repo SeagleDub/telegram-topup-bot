@@ -285,8 +285,8 @@ async def receive_copy_count(message: Message, state: FSMContext, bot: Bot):
         return
 
     count = int(message.text)
-    if count > 40:
-        await message.answer("⚠️ Нельзя создать более 40 копий за раз. Пожалуйста, введите число от 1 до 40.", reply_markup=cancel_kb)
+    if count > 50:
+        await message.answer("⚠️ Нельзя создать более 50 копий за раз. Пожалуйста, введите число от 1 до 50.", reply_markup=cancel_kb)
         return
 
     data = await state.get_data()
