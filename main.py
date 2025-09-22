@@ -703,8 +703,10 @@ async def order_topup(message: Message, state: FSMContext):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏦 AdsCard", callback_data="bank:adscard"),
-         InlineKeyboardButton(text="💳 Traffic.cards", callback_data="bank:trafficcards")]
+        [InlineKeyboardButton(text="🏦 AdsCard (Facebook)", callback_data="bank:adscard_facebook")],
+        [InlineKeyboardButton(text="🏦 AdsCard (Google)", callback_data="bank:adscard_google")],
+        [InlineKeyboardButton(text="💳 Traffic.cards (не активно)", callback_data="bank:trafficcards_inactive")],
+        [InlineKeyboardButton(text="🃏 MultiCards (Google)", callback_data="bank:multicards_google")]
     ])
     m1 = await message.answer("Выберите банк:", reply_markup=kb)
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
@@ -715,6 +717,12 @@ async def order_topup(message: Message, state: FSMContext):
 async def bank_selected(query: CallbackQuery, state: FSMContext):
     await delete_last_messages(query.from_user.id, query.message)
     _, bank = query.data.split(":")
+
+    if bank == "trafficcards_inactive":
+        await query.message.answer("❌ Traffic.cards временно недоступен. Пожалуйста, выберите другой вариант.", reply_markup=cancel_kb)
+        await query.answer()
+        return
+
     await state.update_data(bank=bank)
     msg = await query.message.answer("Введите сумму пополнения:", reply_markup=cancel_kb)
     last_messages[query.from_user.id] = [msg.message_id]
@@ -756,6 +764,15 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
     amount = data.get("amount", "не указано")
     topup_type_text = "⚡ Срочное" if topup_type == "urgent" else "🕘 Не срочное (до 21:00)"
 
+    # Преобразуем внутреннее название банка в читабельное
+    bank_names = {
+        "adscard_facebook": "AdsCard (Facebook)",
+        "adscard_google": "AdsCard (Google)",
+        "trafficcards_inactive": "Traffic.cards (не активно)",
+        "multicards_google": "MultiCards (Google)"
+    }
+    bank_display = bank_names.get(bank, bank)
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Выполнено", callback_data=f"approve:{user_id}"),
          InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
@@ -763,7 +780,7 @@ async def type_selected(query: CallbackQuery, state: FSMContext):
 
     await send_notification_with_buttons(
         f"🔔 Новая заявка от @{username} (ID: {user_id})\n"
-        f"🏦 Банк: {bank}\n"
+        f"🏦 Банк: {bank_display}\n"
         f"💳 Сумма: {amount}\n"
         f"📌 Тип: {topup_type_text}",
         reply_markup=kb
