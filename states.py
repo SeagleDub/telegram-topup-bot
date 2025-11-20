@@ -32,3 +32,7 @@ class Form(StatesGroup):
     # Пиксель система
     entering_pixel_id = State()
     entering_pixel_key = State()
+
+    # Перевод лендинга
+    entering_landing_id = State()
+

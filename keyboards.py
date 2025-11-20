@@ -10,7 +10,8 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    [KeyboardButton(text="📊 Добавить пиксель в систему")]
+    [KeyboardButton(text="📊 Добавить пиксель в систему")],
+    [KeyboardButton(text="🌍 Перевод лендинга")]
 ])
 
 menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -19,7 +20,8 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📂 Запросить расходники")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    [KeyboardButton(text="📊 Добавить пиксель в систему")]
+    [KeyboardButton(text="📊 Добавить пиксель в систему")],
+    [KeyboardButton(text="🌍 Перевод лендинга")]
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[

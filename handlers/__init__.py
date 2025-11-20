@@ -10,6 +10,7 @@ from handlers import landing
 from handlers import unicalization
 from handlers import pixel
 from handlers import broadcast
+from handlers import translation
 
 # Список всех роутеров для удобного импорта
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     'landing',
     'unicalization',
     'pixel',
-    'broadcast'
+    'broadcast',
+    'translation'
 ]
 

@@ -31,6 +31,7 @@ async def main():
     dp.include_router(unicalization.router)
     dp.include_router(pixel.router)
     dp.include_router(broadcast.router)
+    dp.include_router(translation.router)
 
     # Удаляем вебхук и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
