@@ -80,7 +80,7 @@ def download_file_from_drive(service, file_id: str) -> Optional[bytes]:
             "file_id": file_id,
             "error_type": "google_drive_download_error"
         })
-        return 123
+        return None
 
 def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
     """Извлекает переводимые файлы из ZIP архива"""
@@ -264,11 +264,6 @@ async def process_landing_translation(message: Message, state: FSMContext):
     await status_msg.edit_text(f"⬇️ Скачивание архива '{zip_info['name']}'...")
 
     zip_content = download_file_from_drive(drive_service, zip_info['id'])
-    if zip_content == 123:
-        await status_msg.edit_text("❌ Ошибка!!!!! скачивания архива с Google Drive.")
-        await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-        await state.clear()
-        return
     if not zip_content:
         await status_msg.edit_text("❌ Ошибка скачивания архива с Google Drive.")
         await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
