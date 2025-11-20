@@ -10,9 +10,9 @@ from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import (get_landing_category_keyboard, get_admin_processing_keyboard,
-                         cancel_kb, get_menu_keyboard)
+                         cancel_kb, get_menu_keyboard, ready_kb)
 from utils import (is_user_allowed, last_messages, send_notification_with_buttons,
-                     send_document_to_admins, delete_last_messages)
+                     send_document_to_admins, send_photo_to_admins, delete_last_messages)
 from config import GOOGLE_SHEET_ID
 
 router = Router()

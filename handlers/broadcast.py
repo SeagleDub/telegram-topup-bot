@@ -18,87 +18,110 @@ router = Router()
 async def admin_broadcast_start(message: Message, state: FSMContext):
     """Начинает процесс создания рассылки (только для админа и тимлидера)"""
     if message.from_user.id not in [ADMIN_ID, TEAMLEADER_ID]:
+        await message.answer("❌ У вас нет доступа к этой функции.")
         return
 
-    m1 = await message.answer(
-        "Отправьте сообщение для рассылки (текст, изображение, документ или видео).\n"
-        "Можете отправлять несколько сообщений подряд.\n"
-        "Когда закончите, нажмите 'Готово':",
-        reply_markup=cancel_kb
+    await state.clear()
+    await state.update_data(broadcast_messages=[])
+
+    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+    broadcast_kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🚀 Послать")],
+            [KeyboardButton(text="❌ Отмена")]
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False
     )
-    last_messages[message.from_user.id] = [m1.message_id]
+
+    await message.answer(
+        "Отправьте мне любые сообщения, которые хотите разослать.\n"
+        "Когда закончите, нажмите кнопку «🚀 Послать",
+        reply_markup=broadcast_kb
+    )
     await state.set_state(Form.broadcast_collecting)
-    await state.update_data(messages=[])
+
+@router.message(Form.broadcast_collecting, F.text == "🚀 Послать")
+async def send_broadcast(message: Message, state: FSMContext):
+    """Отправляет рассылку всем пользователям"""
+    await message.answer("Начинаю рассылку...")
+    data = await state.get_data()
+    messages = data.get("broadcast_messages", [])
+
+    if not messages:
+        await message.answer("⚠️ Список сообщений пуст. Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
+        await state.clear()
+        return
+
+    user_ids = get_user_ids_from_sheet()
+
+    if not user_ids:
+        await message.answer("⚠️ Список пользователей пуст. Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
+        await state.clear()
+        return
+
+    success_count = 0
+    fail_count = 0
+
+    # Определяем от кого рассылка
+    sender_name = "👑 админа" if message.from_user.id == ADMIN_ID else "👨‍💼 тимлидера"
+
+    for user_id in user_ids:
+        user_success = True
+        try:
+            await message.bot.send_message(
+                user_id,
+                text=f"*📢 Сообщение от {sender_name}*",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Ошибка при отправке заголовка пользователю {user_id}: {e}")
+            user_success = False
+            continue
+
+        for msg in messages:
+            try:
+                await message.bot.copy_message(chat_id=user_id, from_chat_id=msg["chat_id"], message_id=msg["message_id"])
+            except Exception as e:
+                print(f"Ошибка при отправке пользователю {user_id}: {e}")
+                user_success = False
+
+        if user_success:
+            success_count += 1
+        else:
+            fail_count += 1
+
+    await message.answer(
+        f"✅ Рассылка завершена.\n"
+        f"Отправлено: {success_count}\n"
+        f"Не доставлено: {fail_count}",
+        reply_markup=get_menu_keyboard(message.from_user.id)
+    )
+    await state.clear()
+
+@router.message(Form.broadcast_collecting, F.text == "❌ Отмена")
+async def cancel_broadcast(message: Message, state: FSMContext):
+    """Отменяет рассылку"""
+    await state.clear()
+    await message.answer("Рассылка отменена.", reply_markup=get_menu_keyboard(message.from_user.id))
 
 @router.message(Form.broadcast_collecting)
 async def collect_broadcast_messages(message: Message, state: FSMContext):
     """Собирает сообщения для рассылки"""
-    # Проверяем команду отправки
-    if message.text and message.text.lower() in ['готово', 'отправить']:
-        await send_broadcast(message, state)
-        return
-
-    # Сохраняем сообщение
     data = await state.get_data()
-    messages = data.get("messages", [])
+    broadcast_messages = data.get("broadcast_messages", [])
 
-    # Добавляем новое сообщение в список
-    message_info = {
-        'type': message.content_type,
-        'message_id': message.message_id,
-        'chat_id': message.chat.id
+    # Сохраняем необходимую информацию из сообщения для пересылки
+    msg_data = {
+        "message_id": message.message_id,
+        "chat_id": message.chat.id,  # для пересылки
     }
+    broadcast_messages.append(msg_data)
+    await state.update_data(broadcast_messages=broadcast_messages)
 
-    messages.append(message_info)
-    await state.update_data(messages=messages)
+    await message.answer("Сообщение добавлено в рассылку. Отправьте ещё или нажмите «🚀 Послать».")
 
-    await message.answer(f"✅ Сообщение добавлено ({len(messages)} шт.). Отправьте ещё или напишите 'готово'.")
 
-async def send_broadcast(message: Message, state: FSMContext):
-    """Отправляет рассылку всем пользователям"""
-    data = await state.get_data()
-    messages = data.get("messages", [])
-
-    if not messages:
-        await message.answer("❌ Нет сообщений для рассылки!")
-        return
-
-    user_ids = get_user_ids_from_sheet()
-    # Добавляем админа и тимлидера в список получателей
-    user_ids.extend([ADMIN_ID, TEAMLEADER_ID])
-    user_ids = list(set(user_ids))  # Убираем дубликаты
-
-    if not user_ids:
-        await message.answer("❌ Список пользователей пуст!")
-        return
-
-    sent_count = 0
-    failed_count = 0
-
-    status_message = await message.answer(f"📤 Начинаю рассылку для {len(user_ids)} пользователей...")
-
-    for user_id in user_ids:
-        try:
-            # Отправляем все собранные сообщения
-            for msg_info in messages:
-                await message.bot.copy_message(
-                    chat_id=user_id,
-                    from_chat_id=msg_info['chat_id'],
-                    message_id=msg_info['message_id']
-                )
-            sent_count += 1
-        except Exception as e:
-            failed_count += 1
-            bugsnag.notify(e)
-
-    # Обновляем статус
-    await status_message.edit_text(
-        f"✅ Рассылка завершена!\n"
-        f"📤 Отправлено: {sent_count}\n"
-        f"❌ Неудачно: {failed_count}"
-    )
-
-    await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
     await state.clear()
 
 @router.message(F.text == "❌ Отмена", Form.broadcast_collecting)

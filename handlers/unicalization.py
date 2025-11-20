@@ -190,15 +190,17 @@ async def receive_image(message: Message, state: FSMContext):
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
         return
 
-    if not message.photo:
-        await message.answer("Пожалуйста, отправьте изображение.")
+    if message.photo or (message.document and message.document.mime_type.startswith('image/')):
+        file_id = (
+            message.photo[-1].file_id if message.photo
+            else message.document.file_id
+        )
+    else:
+        await message.answer("❌ Пожалуйста, отправьте изображение (фото или документ).", reply_markup=cancel_kb)
         return
+    await state.update_data(unicalization_file_id=file_id)
 
-    largest_photo = message.photo[-1]
-    file_id = largest_photo.file_id
-    await state.update_data(image_file_id=file_id)
-
-    await message.answer("Введите количество копий (от 1 до 100):", reply_markup=cancel_kb)
+    await message.answer("Введите количество уникализированных копий (например, 5):", reply_markup=cancel_kb)
     await state.set_state(Form.unicalization_copies)
 
 @router.message(Form.unicalization_copies)
@@ -209,29 +211,23 @@ async def receive_copy_count(message: Message, state: FSMContext):
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
         return
 
-    try:
-        copies = int(message.text.strip())
-        if copies < 1 or copies > 100:
-            await message.answer("Количество копий должно быть от 1 до 100.")
-            return
-    except ValueError:
-        await message.answer("Пожалуйста, введите корректное число.")
+    if not message.text.isdigit() or int(message.text) <= 0:
+        await message.answer("❌ Введите корректное положительное число копий.", reply_markup=cancel_kb)
+        return
+
+    count = int(message.text)
+    if count > 50:
+        await message.answer("⚠️ Нельзя создать более 50 копий за раз. Пожалуйста, введите число от 1 до 50.", reply_markup=cancel_kb)
         return
 
     data = await state.get_data()
-    file_id = data.get("image_file_id")
+    unicalization_file_id = data.get("unicalization_file_id")
 
+    await message.answer("🔄 Обрабатываю изображение...", reply_markup=cancel_kb)
     try:
-        await message.answer("⏳ Обрабатываю изображение... Пожалуйста, подождите.")
-
-        zip_file = await process_image(message.bot, file_id, message.from_user.id, copies)
-
-        await message.answer_document(
-            zip_file,
-            caption=f"✅ Готово! Создано {copies} уникальных копий изображения."
-        )
-
-        await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+        images_zip = await process_image(message.bot, unicalization_file_id, message.chat.id, count)
+        await message.bot.send_document(message.chat.id, document=images_zip)
+        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=get_menu_keyboard(message.chat.id))
 
     except Exception as e:
         bugsnag.notify(e)
