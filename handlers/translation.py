@@ -67,9 +67,9 @@ def find_folder_by_name(service, folder_name: str, parent_folder_id: str) -> Opt
         return None
 
 def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
-    """Ищет ZIP архив в указанной папке"""
+    """Ищет файл site.zip в указанной папке"""
     try:
-        query = f"'{folder_id}' in parents and mimeType='application/zip'"
+        query = f"name='site.zip' and '{folder_id}' in parents"
         results = service.files().list(q=query, fields="files(id, name)").execute()
         items = results.get('files', [])
 
@@ -77,7 +77,7 @@ def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
             return {'id': items[0]['id'], 'name': items[0]['name']}
         return None
     except Exception as e:
-        print(f"Ошибка поиска ZIP файла в папке: {e}")
+        print(f"Ошибка поиска файла site.zip в папке: {e}")
         return None
 
 def download_file_from_drive(service, file_id: str) -> Optional[bytes]:
@@ -283,8 +283,8 @@ async def process_landing_translation(message: Message, state: FSMContext):
         zip_info = find_zip_in_folder(drive_service, folder_id)
         if not zip_info:
             await status_msg.edit_text(
-                f"❌ ZIP архив не найден в папке '{landing_id}'.\n\n"
-                "Убедитесь, что в папке есть ZIP файл с лендингом."
+                f"❌ Файл 'site.zip' не найден в папке '{landing_id}'.\n\n"
+                "Убедитесь, что в папке есть файл с названием 'site.zip'."
             )
             await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
             await state.clear()
