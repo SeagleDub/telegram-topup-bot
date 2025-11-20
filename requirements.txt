@@ -1,2 +1,7 @@
 aiogram==3.20.0
-python-dotenv
+python-dotenv==1.0.0
+gspread==6.0.2
+bugsnag==4.2.1
+shortuuid==1.0.11
+Pillow==10.1.0
+piexif==1.1.3
