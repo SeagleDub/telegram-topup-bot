@@ -17,4 +17,5 @@ TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))
 
 # Настройка Bugsnag
 import bugsnag
-bugsnag.configure(api_key=BUGSNAG_TOKEN)
+if BUGSNAG_TOKEN:
+    bugsnag.configure(api_key=BUGSNAG_TOKEN)

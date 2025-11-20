@@ -79,7 +79,8 @@ async def update_linked_messages(bot: Bot, current_chat_id: int, current_message
 
         # Удаляем обе записи из словаря после обработки
         del linked_messages[current_key]
-        del linked_messages[linked_key]
+        if linked_key in linked_messages:
+            del linked_messages[linked_key]
 
 async def send_notification_with_buttons(bot: Bot, message_text: str, reply_markup):
     """Отправляет уведомление с кнопками админу и тимлидеру, сохраняет связи между сообщениями"""
