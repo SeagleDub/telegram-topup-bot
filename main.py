@@ -13,7 +13,8 @@ from handlers import (
     landing,
     unicalization,
     pixel,
-    broadcast
+    broadcast,
+    translation
 )
 
 async def main():
