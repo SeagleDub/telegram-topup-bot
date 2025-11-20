@@ -8,12 +8,12 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from ..states import Form
-from ..keyboards import (get_landing_category_keyboard, get_admin_processing_keyboard,
-                       cancel_kb, ready_kb, get_menu_keyboard)
-from ..utils import (is_user_allowed, last_messages, send_notification_with_buttons,
-                   send_document_to_admins, send_photo_to_admins)
-from ..config import GOOGLE_SHEET_ID
+from states import Form
+from keyboards import (get_landing_category_keyboard, get_admin_processing_keyboard,
+                         cancel_kb, get_menu_keyboard)
+from utils import (is_user_allowed, last_messages, send_notification_with_buttons,
+                     send_document_to_admins, delete_last_messages)
+from config import GOOGLE_SHEET_ID
 
 router = Router()
 

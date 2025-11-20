@@ -8,10 +8,10 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
-from ..states import Form
-from ..keyboards import cancel_kb, get_menu_keyboard
-from ..utils import is_user_allowed, last_messages, send_notification_to_admins
-from ..config import GOOGLE_SHEET_ID
+from states import Form
+from keyboards import cancel_kb, get_menu_keyboard
+from utils import is_user_allowed, last_messages, send_notification_to_admins
+from config import GOOGLE_SHEET_ID
 
 router = Router()
 

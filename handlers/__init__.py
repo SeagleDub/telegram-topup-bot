@@ -3,13 +3,13 @@
 """
 
 # Импортируем все модули обработчиков
-from . import common
-from . import topup
-from . import supplies
-from . import landing
-from . import unicalization
-from . import pixel
-from . import broadcast
+from handlers import common
+from handlers import topup
+from handlers import supplies
+from handlers import landing
+from handlers import unicalization
+from handlers import pixel
+from handlers import broadcast
 
 # Список всех роутеров для удобного импорта
 __all__ = [

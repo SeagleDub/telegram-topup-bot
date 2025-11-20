@@ -7,10 +7,10 @@ from aiogram import Router, F
 from aiogram.types import Message, ContentType
 from aiogram.fsm.context import FSMContext
 
-from ..states import Form
-from ..keyboards import cancel_kb, get_menu_keyboard
-from ..utils import last_messages, get_user_ids_from_sheet
-from ..config import ADMIN_ID, TEAMLEADER_ID
+from states import Form
+from keyboards import cancel_kb, get_menu_keyboard
+from utils import last_messages, get_user_ids_from_sheet
+from config import ADMIN_ID, TEAMLEADER_ID
 
 router = Router()
 

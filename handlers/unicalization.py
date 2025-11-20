@@ -16,9 +16,9 @@ from aiogram.types import Message, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 import bugsnag
 
-from ..states import Form
-from ..keyboards import cancel_kb, get_menu_keyboard
-from ..utils import is_user_allowed, last_messages
+from states import Form
+from keyboards import cancel_kb, get_menu_keyboard
+from utils import is_user_allowed, last_messages
 
 router = Router()
 

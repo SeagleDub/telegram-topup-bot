@@ -6,10 +6,10 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from ..keyboards import get_menu_keyboard, cancel_kb
-from ..utils import (last_messages, delete_last_messages, update_linked_messages,
-                   send_notification_to_admins)
-from ..config import ADMIN_ID, TEAMLEADER_ID
+from keyboards import get_menu_keyboard, cancel_kb
+from utils import (last_messages, delete_last_messages, update_linked_messages,
+                     send_notification_to_admins)
+from config import ADMIN_ID, TEAMLEADER_ID
 
 router = Router()
 
