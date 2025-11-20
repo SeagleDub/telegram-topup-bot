@@ -70,9 +70,17 @@ def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
 
 def download_file_from_drive(service, file_id: str) -> Optional[bytes]:
     """Скачивает файл с Google Drive"""
-    request = service.files().get_media(fileId=file_id)
-    file_content = request.execute()
-    return file_content
+    try:
+        request = service.files().get_media(fileId=file_id)
+        file_content = request.execute()
+        return file_content
+    except Exception as e:
+        bugsnag.notify(e, meta_data={
+            "function": "download_file_from_drive",
+            "file_id": file_id,
+            "error_type": "google_drive_download_error"
+        })
+        return None
 
 def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
     """Извлекает переводимые файлы из ZIP архива"""
