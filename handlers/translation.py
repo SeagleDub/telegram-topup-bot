@@ -6,6 +6,7 @@ import io
 import zipfile
 import tempfile
 import re
+import asyncio
 from typing import List, Dict, Optional
 import gspread
 import bugsnag
@@ -176,8 +177,8 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
 
     return translatable_files
 
-def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0, total_chunks: int = 1) -> str:
-    """Переводит часть текста с помощью ChatGPT API"""
+async def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0, total_chunks: int = 1) -> str:
+    """Переводит часть текста с помощью ChatGPT API (асинхронно)"""
     if not client:
         return text
 
@@ -221,33 +222,38 @@ def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0,
 
 {text}"""
 
-    response = client.chat.completions.create(
+    # Выполняем API запрос в отдельном потоке, чтобы не блокировать event loop
+    loop = asyncio.get_event_loop()
+    response = await loop.run_in_executor(None, lambda: client.chat.completions.create(
         model="gpt-5-nano",
         messages=[
             {"role": "system", "content": "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."},
             {"role": "user", "content": prompt}
         ],
         max_completion_tokens=2000
-    )
+    ))
     return response.choices[0].message.content.strip()
 
-def translate_text_with_chatgpt(text: str, filename: str) -> str:
-    """Переводит текст с помощью ChatGPT API, разделяя на части при необходимости"""
+async def translate_text_with_chatgpt(text: str, filename: str) -> str:
+    """Переводит текст с помощью ChatGPT API, разделяя на части при необходимости (асинхронно с параллельным выполнением)"""
     if not client:
         return text
 
     # Проверяем размер файла
     if len(text) <= MAX_CHUNK_SIZE:
-        return translate_chunk_with_chatgpt(text, filename)
+        return await translate_chunk_with_chatgpt(text, filename)
 
     # Разделяем файл на части
     chunks = split_file_into_chunks(text, filename)
 
-    # Переводим каждую часть
-    translated_chunks = []
+    # Создаем задачи для параллельного выполнения переводов
+    tasks = []
     for i, chunk in enumerate(chunks):
-        translated_chunk = translate_chunk_with_chatgpt(chunk, filename, i, len(chunks))
-        translated_chunks.append(translated_chunk)
+        task = translate_chunk_with_chatgpt(chunk, filename, i, len(chunks))
+        tasks.append(task)
+
+    # Выполняем все переводы параллельно
+    translated_chunks = await asyncio.gather(*tasks)
 
     # Собираем части обратно
     file_ext = os.path.splitext(filename)[1].lower()
@@ -417,7 +423,7 @@ async def process_landing_translation(message: Message, state: FSMContext):
                     f"Прогресс: {i}/{total_files}"
                 )
 
-            translated_content = translate_text_with_chatgpt(content, filename)
+            translated_content = await translate_text_with_chatgpt(content, filename)
             translated_files[filename] = translated_content
 
         # Создаем новый архив с переведенными файлами
