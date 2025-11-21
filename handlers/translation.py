@@ -106,7 +106,6 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
 def translate_text_with_chatgpt(text: str, filename: str) -> str:
     """Переводит текст с помощью ChatGPT API"""
     if not client:
-        print(f"OpenAI клиент не инициализирован для файла {filename}")
         return text
 
     # Определяем тип файла для более точного промпта
