@@ -104,55 +104,72 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
     return translatable_files
 
 def translate_text_with_chatgpt(text: str, filename: str) -> str:
-    """Переводит текст с помощью ChatGPT API"""
+    """Переводит текст с помощью ChatGPT API с разбиением на чанки"""
+
     if not client:
         return text
 
-    # Определяем тип файла для более точного промпта
+    # Максимальный размер одного чанка
+    CHUNK_SIZE = 10000
+
+    # Функция делит текст на части
+    def split_into_chunks(s, size):
+        return [s[i:i + size] for i in range(0, len(s), size)]
+
+    chunks = split_into_chunks(text, CHUNK_SIZE)
+    translated_chunks = []
+
     file_ext = os.path.splitext(filename)[1].lower()
 
+    # Формируем один раз системный промпт
+    system_prompt = "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."
+
+    # Формируем пользовательскую подсказку для конкретного типа файла
     if file_ext in ['.html', '.htm']:
-        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого HTML файла на польский язык.
+        base_prompt = """
+Переведи ТОЛЬКО текстовое содержимое этого HTML фрагмента на польский язык.
 Сохрани всю HTML разметку, теги, атрибуты и структуру без изменений.
-Переводи только текст между тегами и значения атрибутов alt, title, placeholder.
-НЕ переводи имена классов, id, названия файлов, URL и технические атрибуты.
-
-Файл для перевода:
-{text}"""
-
+Переводи только текст между тегами и значения alt/title/placeholder.
+НЕ переводи имена классов, id, названия файлов, URL.
+Фрагмент:
+"""
     elif file_ext == '.php':
-        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого PHP файла на польский язык.
-Сохрани весь PHP код, HTML разметку, переменные и функции без изменений.
+        base_prompt = """
+Переведи ТОЛЬКО текстовое содержимое этого фрагмента PHP на польский язык.
+Сохрани весь PHP код, переменные, HTML разметку и функции без изменений.
 Переводи только строки в кавычках, которые являются пользовательским текстом.
-НЕ переводи названия переменных, функций, классов, комментарии к коду.
-
-Файл для перевода:
-{text}"""
-
+НЕ переводи переменные, функции, классы и комментарии.
+Фрагмент:
+"""
     elif file_ext == '.js':
-        prompt = f"""Переведи ТОЛЬКО пользовательские текстовые строки в этом JavaScript файле на польский язык.
-Сохрани весь JavaScript код, переменные и функции без изменений.
-Переводи только строки в кавычках, которые отображаются пользователю (alert, innerHTML, текст кнопок и т.д.).
-НЕ переводи названия переменных, функций, комментарии к коду, технические строки.
-
-Файл для перевода:
-{text}"""
-
+        base_prompt = """
+Переведи ТОЛЬКО пользовательские читаемые строки этого фрагмента JavaScript на польский.
+Код, переменные и логика не изменяются.
+Фрагмент:
+"""
     else:
-        prompt = f"""Переведи текстовое содержимое этого файла на польский язык, сохранив форматирование и структуру:
+        base_prompt = """
+Переведи этот текст на польский язык, сохранив формат и структуру:
+"""
 
-{text}"""
+    # Переводим каждый чанк по очереди
+    for idx, chunk in enumerate(chunks, 1):
+        prompt = base_prompt + chunk
 
-    response = client.chat.completions.create(
-        model="gpt-5-nano",
-        messages=[
-            {"role": "system", "content": "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."},
-            {"role": "user", "content": prompt}
-        ],
-        max_completion_tokens=20000
-    )
+        response = client.chat.completions.create(
+            model="gpt-5-nano",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            max_completion_tokens=20000
+        )
 
-    return response.choices[0].message.content.strip()
+        translated = response.choices[0].message.content.strip()
+        translated_chunks.append(translated)
+
+    # Склеиваем переведённые части обратно
+    return "".join(translated_chunks)
 
 
 def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str]) -> bytes:
