@@ -145,7 +145,7 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
 {text}"""
 
     response = client.chat.completions.create(
-        model="gpt-4-turbo",
+        model="gpt-5-nano",
         messages=[
             {"role": "system", "content": "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."},
             {"role": "user", "content": prompt}
