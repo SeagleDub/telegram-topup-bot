@@ -232,15 +232,7 @@ async def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: in
         ],
         max_completion_tokens=2000
     ))
-
-    translated_text = response.choices[0].message.content.strip()
-
-    # Проверяем что перевод не пустой и не слишком короткий
-    if not translated_text or len(translated_text) < len(text) * 0.1:
-        # Если перевод пустой или слишком короткий, возвращаем оригинал
-        return text
-
-    return translated_text
+    return response.choices[0].message.content.strip()
 
 async def translate_text_with_chatgpt(text: str, filename: str) -> str:
     """Переводит текст с помощью ChatGPT API, разделяя на части при необходимости (асинхронно с параллельным выполнением)"""
@@ -263,26 +255,14 @@ async def translate_text_with_chatgpt(text: str, filename: str) -> str:
     # Выполняем все переводы параллельно
     translated_chunks = await asyncio.gather(*tasks)
 
-    # Проверяем что все части переведены корректно
-    for i, chunk in enumerate(translated_chunks):
-        if not chunk or len(chunk.strip()) == 0:
-            # Если часть пустая, заменяем на оригинал
-            translated_chunks[i] = chunks[i]
-
     # Собираем части обратно
     file_ext = os.path.splitext(filename)[1].lower()
     if file_ext in ['.html', '.htm']:
         # Для HTML соединяем с помощью >
-        result = '>'.join(translated_chunks)
+        return '>'.join(translated_chunks)
     else:
         # Для остальных файлов соединяем с переносом строки
-        result = '\n'.join(translated_chunks)
-
-    # Финальная проверка - если результат пустой, возвращаем оригинал
-    if not result or len(result.strip()) == 0:
-        return text
-
-    return result
+        return '\n'.join(translated_chunks)
 
 
 def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str]) -> bytes:
@@ -297,20 +277,11 @@ def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str])
                     filename = file_info.filename
 
                     if filename in translated_files:
-                        # Проверяем что переведенный файл не пустой
-                        translated_content = translated_files[filename]
-                        if translated_content and len(translated_content.strip()) > 0:
-                            # Записываем переведенный файл
-                            new_zip_ref.writestr(
-                                filename,
-                                translated_content.encode('utf-8')
-                            )
-                        else:
-                            # Если переведенный файл пустой, используем оригинал
-                            new_zip_ref.writestr(
-                                filename,
-                                original_zip_ref.read(filename)
-                            )
+                        # Записываем переведенный файл
+                        new_zip_ref.writestr(
+                            filename,
+                            translated_files[filename].encode('utf-8')
+                        )
                     else:
                         # Копируем оригинальный файл без изменений
                         new_zip_ref.writestr(
@@ -453,11 +424,6 @@ async def process_landing_translation(message: Message, state: FSMContext):
                 )
 
             translated_content = await translate_text_with_chatgpt(content, filename)
-
-            # Дополнительная проверка - если перевод пустой, используем оригинал
-            if not translated_content or len(translated_content.strip()) == 0:
-                translated_content = content
-
             translated_files[filename] = translated_content
 
         # Создаем новый архив с переведенными файлами
