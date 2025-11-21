@@ -90,6 +90,12 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
         for file_info in zip_ref.infolist():
             if not file_info.is_dir():
                 file_ext = os.path.splitext(file_info.filename)[1].lower()
+                filename_lower = file_info.filename.lower()
+
+                # Исключаем .min.js файлы
+                if filename_lower.endswith('.min.js'):
+                    continue
+
                 if file_ext in TRANSLATABLE_EXTENSIONS:
                     # Пытаемся прочитать файл как UTF-8, затем windows-1251
                     content = zip_ref.read(file_info.filename).decode('utf-8')
