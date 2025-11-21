@@ -150,7 +150,7 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
             {"role": "system", "content": "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=4000,
+        max_completion_tokens=5000,
         temperature=0.3
     )
 
