@@ -32,6 +32,9 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # Расширения файлов для перевода
 TRANSLATABLE_EXTENSIONS = {'.html', '.htm', '.php', '.js'}
 
+# Максимальный размер части для перевода (примерно 8000 токенов)
+MAX_CHUNK_SIZE = 25000  # символов
+
 def get_google_drive_service():
     """Создает сервис для работы с Google Drive"""
     # Используем те же credentials что и для Google Sheets
@@ -70,17 +73,73 @@ def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
 
 def download_file_from_drive(service, file_id: str) -> Optional[bytes]:
     """Скачивает файл с Google Drive"""
-    try:
-        request = service.files().get_media(fileId=file_id)
-        file_content = request.execute()
-        return file_content
-    except Exception as e:
-        bugsnag.notify(e, meta_data={
-            "function": "download_file_from_drive",
-            "file_id": file_id,
-            "error_type": "google_drive_download_error"
-        })
-        return None
+    request = service.files().get_media(fileId=file_id)
+    file_content = request.execute()
+    return file_content
+
+def split_file_into_chunks(content: str, filename: str) -> List[str]:
+    """Разделяет большой файл на части для перевода"""
+    if len(content) <= MAX_CHUNK_SIZE:
+        return [content]
+
+    chunks = []
+    file_ext = os.path.splitext(filename)[1].lower()
+
+    if file_ext in ['.html', '.htm']:
+        # Для HTML разделяем по тегам
+        parts = content.split('>')
+        current_chunk = ""
+
+        for part in parts:
+            part_with_bracket = part + '>' if part != parts[-1] else part
+
+            if len(current_chunk + part_with_bracket) > MAX_CHUNK_SIZE:
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip('>'))
+                current_chunk = part_with_bracket
+            else:
+                current_chunk += part_with_bracket
+
+        if current_chunk:
+            chunks.append(current_chunk.rstrip('>') if current_chunk.endswith('>') else current_chunk)
+
+    elif file_ext == '.php':
+        # Для PHP разделяем по строкам, сохраняя PHP теги
+        lines = content.split('\n')
+        current_chunk = ""
+
+        for line in lines:
+            if len(current_chunk + line + '\n') > MAX_CHUNK_SIZE:
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip('\n'))
+                current_chunk = line + '\n'
+            else:
+                current_chunk += line + '\n'
+
+        if current_chunk:
+            chunks.append(current_chunk.rstrip('\n'))
+
+    elif file_ext == '.js':
+        # Для JS разделяем по функциям или по строкам
+        lines = content.split('\n')
+        current_chunk = ""
+
+        for line in lines:
+            if len(current_chunk + line + '\n') > MAX_CHUNK_SIZE:
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip('\n'))
+                current_chunk = line + '\n'
+            else:
+                current_chunk += line + '\n'
+
+        if current_chunk:
+            chunks.append(current_chunk.rstrip('\n'))
+    else:
+        # Для остальных файлов простое разделение по символам
+        for i in range(0, len(content), MAX_CHUNK_SIZE):
+            chunks.append(content[i:i + MAX_CHUNK_SIZE])
+
+    return chunks
 
 def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
     """Извлекает переводимые файлы из ZIP архива"""
@@ -97,14 +156,34 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
                     continue
 
                 if file_ext in TRANSLATABLE_EXTENSIONS:
-                    # Пытаемся прочитать файл как UTF-8, затем windows-1251
-                    content = zip_ref.read(file_info.filename).decode('utf-8')
+                    # Читаем файл
+                    file_data = zip_ref.read(file_info.filename)
+                    print(f"Обрабатываю файл {file_info.filename}, размер: {len(file_data)} байт")
+
+                    # Пытаемся декодировать с разными кодировками
+                    content = None
+                    for encoding in ['utf-8', 'windows-1251', 'latin-1']:
+                        try:
+                            content = file_data.decode(encoding)
+                            if encoding != 'utf-8':
+                                print(f"Файл {file_info.filename} декодирован как {encoding}")
+                            break
+                        except UnicodeDecodeError:
+                            continue
+
+                    if content is None:
+                        print(f"Не удалось декодировать файл: {file_info.filename}")
+                        continue
+
                     translatable_files[file_info.filename] = content
+
+                    if len(content) > MAX_CHUNK_SIZE:
+                        print(f"Файл {file_info.filename} большой ({len(content)} символов), будет разделен на части")
 
     return translatable_files
 
-def translate_text_with_chatgpt(text: str, filename: str) -> str:
-    """Переводит текст с помощью ChatGPT API"""
+def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0, total_chunks: int = 1) -> str:
+    """Переводит часть текста с помощью ChatGPT API"""
     if not client:
         print(f"OpenAI клиент не инициализирован для файла {filename}")
         return text
@@ -112,35 +191,40 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
     # Определяем тип файла для более точного промпта
     file_ext = os.path.splitext(filename)[1].lower()
 
+    chunk_info = f" (часть {chunk_index + 1} из {total_chunks})" if total_chunks > 1 else ""
+
     if file_ext in ['.html', '.htm']:
-        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого HTML файла на испанский язык.
+        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого фрагмента HTML файла на испанский язык{chunk_info}.
 Сохрани всю HTML разметку, теги, атрибуты и структуру без изменений.
 Переводи только текст между тегами и значения атрибутов alt, title, placeholder.
 НЕ переводи имена классов, id, названия файлов, URL и технические атрибуты.
+ВАЖНО: Это может быть фрагмент файла, поэтому сохрани все открытые теги без изменений.
 
-Файл для перевода:
+Фрагмент для перевода:
 {text}"""
 
     elif file_ext == '.php':
-        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого PHP файла на испанский язык.
+        prompt = f"""Переведи ТОЛЬКО текстовое содержимое этого фрагмента PHP файла на испанский язык{chunk_info}.
 Сохрани весь PHP код, HTML разметку, переменные и функции без изменений.
 Переводи только строки в кавычках, которые являются пользовательским текстом.
 НЕ переводи названия переменных, функций, классов, комментарии к коду.
+ВАЖНО: Это может быть фрагмент файла, сохрани структуру кода.
 
-Файл для перевода:
+Фрагмент для перевода:
 {text}"""
 
     elif file_ext == '.js':
-        prompt = f"""Переведи ТОЛЬКО пользовательские текстовые строки в этом JavaScript файле на испанский язык.
+        prompt = f"""Переведи ТОЛЬКО пользовательские текстовые строки в этом фрагменте JavaScript файла на испанский язык{chunk_info}.
 Сохрани весь JavaScript код, переменные и функции без изменений.
 Переводи только строки в кавычках, которые отображаются пользователю (alert, innerHTML, текст кнопок и т.д.).
 НЕ переводи названия переменных, функций, комментарии к коду, технические строки.
+ВАЖНО: Это может быть фрагмент файла, сохрани синтаксис JavaScript.
 
-Файл для перевода:
+Фрагмент для перевода:
 {text}"""
 
     else:
-        prompt = f"""Переведи текстовое содержимое этого файла на испанский язык, сохранив форматирование и структуру:
+        prompt = f"""Переведи текстовое содержимое этого фрагмента файла на испанский язык{chunk_info}, сохранив форматирование и структуру:
 
 {text}"""
 
@@ -152,8 +236,38 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
         ],
         max_completion_tokens=20000
     )
-
     return response.choices[0].message.content.strip()
+
+def translate_text_with_chatgpt(text: str, filename: str) -> str:
+    """Переводит текст с помощью ChatGPT API, разделяя на части при необходимости"""
+    if not client:
+        print(f"OpenAI клиент не инициализирован для файла {filename}")
+        return text
+
+    # Проверяем размер файла
+    if len(text) <= MAX_CHUNK_SIZE:
+        return translate_chunk_with_chatgpt(text, filename)
+
+    # Разделяем файл на части
+    print(f"Файл {filename} слишком большой ({len(text)} символов), разделяю на части...")
+    chunks = split_file_into_chunks(text, filename)
+    print(f"Файл {filename} разделен на {len(chunks)} частей")
+
+    # Переводим каждую часть
+    translated_chunks = []
+    for i, chunk in enumerate(chunks):
+        print(f"Переводим часть {i + 1}/{len(chunks)} файла {filename}")
+        translated_chunk = translate_chunk_with_chatgpt(chunk, filename, i, len(chunks))
+        translated_chunks.append(translated_chunk)
+
+    # Собираем части обратно
+    file_ext = os.path.splitext(filename)[1].lower()
+    if file_ext in ['.html', '.htm']:
+        # Для HTML соединяем с помощью >
+        return '>'.join(translated_chunks)
+    else:
+        # Для остальных файлов соединяем с переносом строки
+        return '\n'.join(translated_chunks)
 
 
 def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str]) -> bytes:
@@ -294,11 +408,25 @@ async def process_landing_translation(message: Message, state: FSMContext):
         translated_files = {}
 
         for i, (filename, content) in enumerate(translatable_files.items(), 1):
-            await status_msg.edit_text(
-                f"🌍 Перевод файлов на испанский...\n\n"
-                f"Обрабатываю: {filename}\n"
-                f"Прогресс: {i}/{total_files}"
-            )
+            file_size = len(content)
+            is_large_file = file_size > MAX_CHUNK_SIZE
+
+            if is_large_file:
+                chunks_count = (file_size // MAX_CHUNK_SIZE) + 1
+                await status_msg.edit_text(
+                    f"🌍 Перевод файлов на испанский...\n\n"
+                    f"Обрабатываю: {filename}\n"
+                    f"Размер: {file_size:,} символов (большой файл)\n"
+                    f"Будет разделен на ~{chunks_count} частей\n"
+                    f"Прогресс: {i}/{total_files}"
+                )
+            else:
+                await status_msg.edit_text(
+                    f"🌍 Перевод файлов на испанский...\n\n"
+                    f"Обрабатываю: {filename}\n"
+                    f"Размер: {file_size:,} символов\n"
+                    f"Прогресс: {i}/{total_files}"
+                )
 
             translated_content = translate_text_with_chatgpt(content, filename)
             translated_files[filename] = translated_content
