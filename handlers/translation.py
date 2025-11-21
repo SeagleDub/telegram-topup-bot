@@ -158,27 +158,34 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
                 if file_ext in TRANSLATABLE_EXTENSIONS:
                     # Читаем файл
                     file_data = zip_ref.read(file_info.filename)
+                    print(f"Обрабатываю файл {file_info.filename}, размер: {len(file_data)} байт")
 
                     # Пытаемся декодировать с разными кодировками
                     content = None
                     for encoding in ['utf-8', 'windows-1251', 'latin-1']:
                         try:
                             content = file_data.decode(encoding)
+                            if encoding != 'utf-8':
+                                print(f"Файл {file_info.filename} декодирован как {encoding}")
                             break
                         except UnicodeDecodeError:
                             continue
 
                     if content is None:
+                        print(f"Не удалось декодировать файл: {file_info.filename}")
                         continue
 
                     translatable_files[file_info.filename] = content
 
+                    if len(content) > MAX_CHUNK_SIZE:
+                        print(f"Файл {file_info.filename} большой ({len(content)} символов), будет разделен на части")
 
     return translatable_files
 
 def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0, total_chunks: int = 1) -> str:
     """Переводит часть текста с помощью ChatGPT API"""
     if not client:
+        print(f"OpenAI клиент не инициализирован для файла {filename}")
         return text
 
     # Определяем тип файла для более точного промпта
@@ -234,6 +241,7 @@ def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0,
 def translate_text_with_chatgpt(text: str, filename: str) -> str:
     """Переводит текст с помощью ChatGPT API, разделяя на части при необходимости"""
     if not client:
+        print(f"OpenAI клиент не инициализирован для файла {filename}")
         return text
 
     # Проверяем размер файла
@@ -241,11 +249,14 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
         return translate_chunk_with_chatgpt(text, filename)
 
     # Разделяем файл на части
+    print(f"Файл {filename} слишком большой ({len(text)} символов), разделяю на части...")
     chunks = split_file_into_chunks(text, filename)
+    print(f"Файл {filename} разделен на {len(chunks)} частей")
 
     # Переводим каждую часть
     translated_chunks = []
     for i, chunk in enumerate(chunks):
+        print(f"Переводим часть {i + 1}/{len(chunks)} файла {filename}")
         translated_chunk = translate_chunk_with_chatgpt(chunk, filename, i, len(chunks))
         translated_chunks.append(translated_chunk)
 
