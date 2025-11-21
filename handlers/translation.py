@@ -32,8 +32,8 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # Расширения файлов для перевода
 TRANSLATABLE_EXTENSIONS = {'.html', '.htm', '.php', '.js'}
 
-# Максимальный размер части для перевода (примерно 8000 токенов)
-MAX_CHUNK_SIZE = 25000  # символов
+# Максимальный размер части для перевода (примерно 1250 токенов)
+MAX_CHUNK_SIZE = 5000  # символов
 
 def get_google_drive_service():
     """Создает сервис для работы с Google Drive"""
@@ -227,7 +227,7 @@ def translate_chunk_with_chatgpt(text: str, filename: str, chunk_index: int = 0,
             {"role": "system", "content": "Ты профессиональный переводчик веб-контента. Переводи точно и сохраняй всю техническую разметку."},
             {"role": "user", "content": prompt}
         ],
-        max_completion_tokens=20000
+        max_completion_tokens=2000
     )
     return response.choices[0].message.content.strip()
 
