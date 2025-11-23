@@ -258,17 +258,47 @@ def is_inside_js_block(code: str) -> bool:
 async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
     """Перевод одного чанка с контролем параллельности"""
     async with sem:
-        response = await client.chat.completions.create(
-            model="gpt-5-nano",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": base_prompt + chunk},
-            ],
-            max_completion_tokens=20000
-        )
+        max_retries = 3
+        min_response_length = len(chunk) // 4  # Минимум 25% от исходного текста
 
-        translated = response.choices[0].message.content.strip()
-        return idx, translated
+        for attempt in range(max_retries):
+            response = await client.chat.completions.create(
+                model="gpt-5-nano",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": base_prompt + chunk},
+                ],
+                max_completion_tokens=20000,
+                temperature=0.1  # Более детерминированные ответы
+            )
+
+            translated = response.choices[0].message.content
+
+            if not translated:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return idx, f"<!-- TRANSLATION_FAILED: Empty response -->{chunk}<!-- /TRANSLATION_FAILED -->"
+
+            translated = translated.strip()
+
+            # Проверяем, что ответ не слишком короткий
+            if len(translated) < min_response_length:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return idx, f"<!-- TRANSLATION_FAILED: Response too short -->{chunk}<!-- /TRANSLATION_FAILED -->"
+
+            # Проверяем, что ответ не обрезан
+            if not is_response_complete(translated, chunk):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return idx, f"<!-- TRANSLATION_FAILED: Response incomplete -->{chunk}<!-- /TRANSLATION_FAILED -->"
+
+            # Успешный перевод
+            return idx, translated
+
 
 
 async def translate_text_with_chatgpt_async(text: str, filename: str, target_language: str, target_country: str) -> str:
@@ -550,17 +580,32 @@ async def process_translation_in_background(landing_id: str, target_language: st
         bugsnag.notify(e, meta_data={
             "function": "process_translation_in_background",
             "landing_id": landing_id,
+            "target_language": target_language,
+            "target_country": target_country,
             "user_id": message.from_user.id,
             "username": message.from_user.username,
             "error_type": "translation_process_error"
         })
 
-        # Показываем пользователю понятное сообщение об ошибке
-        await status_msg.edit_text(
-            "❌ Произошла техническая ошибка при обработке лендинга.\n\n"
-            "Ошибка автоматически зарегистрирована для исправления.\n"
-            "Попробуйте позже или обратитесь к администратору."
-        )
+        # Показываем пользователю детальное сообщение об ошибке
+        error_msg = str(e)[:500]  # Ограничиваем длину сообщения об ошибке
+
+        try:
+            await status_msg.edit_text(
+                f"❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
+                f"<code>{error_msg}</code>\n\n"
+                f"Ошибка автоматически зарегистрирована для исправления.",
+                parse_mode="HTML"
+            )
+        except:
+            # Если не удается отредактировать статусное сообщение, отправляем новое
+            await message.answer(
+                f"❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
+                f"<code>{error_msg}</code>\n\n"
+                f"Ошибка автоматически зарегистрирована для исправления.",
+                parse_mode="HTML"
+            )
+
         await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
 
 
@@ -729,3 +774,36 @@ async def process_country_choice(message: Message, state: FSMContext):
 
     # Запускаем процесс перевода в фоновом режиме
     asyncio.create_task(process_translation_in_background(landing_id, target_language, target_country, message, status_msg))
+
+
+def is_response_complete(response: str, original: str) -> bool:
+    """Проверяет, является ли ответ полным (не обрезанным)"""
+    if not response:
+        return False
+
+    # Для HTML/PHP файлов проверяем баланс тегов
+    if '<' in original and '>' in original:
+        open_tags = response.count('<')
+        close_tags = response.count('>')
+
+        # Если теги сильно разбалансированы, возможно ответ обрезан
+        if abs(open_tags - close_tags) > 3:
+            return False
+
+    # Проверяем, что ответ не заканчивается на середине слова
+    if response and not response[-1].isspace() and not response[-1] in '.,!?;:>})]}"\'-':
+        # Если последний символ - буква и перед ним нет пробела, возможно обрезано
+        if len(response) > 10 and not response[-2:].isspace():
+            return False
+
+    # Для JS файлов проверяем баланс скобок
+    if '{' in original or '(' in original:
+        open_braces = response.count('{') - response.count('}')
+        open_parens = response.count('(') - response.count(')')
+
+        # Небольшой дисбаланс допустим, но не критический
+        if abs(open_braces) > 2 or abs(open_parens) > 2:
+            return False
+
+    return True
+
