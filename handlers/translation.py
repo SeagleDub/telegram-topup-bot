@@ -6,6 +6,7 @@ import io
 import zipfile
 import tempfile
 import re
+import asyncio
 from typing import List, Dict, Optional
 import gspread
 import bugsnag
@@ -215,6 +216,148 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
     return "".join(translated_chunks)
 
 
+async def process_translation_in_background(landing_id: str, message: Message, status_msg: Message):
+    """Выполняет перевод лендинга в фоновом режиме"""
+    try:
+        # Инициализируем Google Drive сервис
+        drive_service = get_google_drive_service()
+        if not drive_service:
+            await status_msg.edit_text("❌ Ошибка подключения к Google Drive. Попробуйте позже.")
+            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+            return
+
+        # Ищем папку с указанным ID
+        await status_msg.edit_text(f"🔄 Поиск папки '{landing_id}' на Google Drive...")
+
+        folder_id = find_folder_by_name(drive_service, landing_id, GOOGLE_DRIVE_FOLDER_ID)
+        if not folder_id:
+            await status_msg.edit_text(
+                f"❌ Папка с ID '{landing_id}' не найдена на Google Drive.\n\n"
+                "Проверьте правильность написания ID лендинга."
+            )
+            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+            return
+
+        # Ищем ZIP архив в папке
+        await status_msg.edit_text("🔄 Поиск архива в папке...")
+
+        zip_info = find_zip_in_folder(drive_service, folder_id)
+        if not zip_info:
+            await status_msg.edit_text(
+                f"❌ Файл 'site.zip' не найден в папке '{landing_id}'.\n\n"
+                "Убедитесь, что в папке есть файл с названием 'site.zip'."
+            )
+            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+            return
+
+        # Скачиваем архив
+        await status_msg.edit_text(f"⬇️ Скачивание архива '{zip_info['name']}'...")
+
+        # Выполняем скачивание в executor для избежания блокировки
+        loop = asyncio.get_event_loop()
+        zip_content = await loop.run_in_executor(
+            None,
+            download_file_from_drive,
+            drive_service,
+            zip_info['id']
+        )
+
+        if not zip_content:
+            await status_msg.edit_text("❌ Ошибка скачивания архива с Google Drive.")
+            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+            return
+
+        # Извлекаем переводимые файлы
+        await status_msg.edit_text("📂 Анализ содержимого архива...")
+
+        # Выполняем извлечение файлов в executor
+        translatable_files = await loop.run_in_executor(
+            None,
+            extract_translatable_files,
+            zip_content
+        )
+
+        if not translatable_files:
+            await status_msg.edit_text(
+                "❌ В архиве не найдено файлов для перевода.\n\n"
+                "Поддерживаемые форматы: HTML, PHP, JS"
+            )
+            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+            return
+
+        # Переводим файлы
+        total_files = len(translatable_files)
+        translated_files = {}
+
+        for i, (filename, content) in enumerate(translatable_files.items(), 1):
+            await status_msg.edit_text(
+                f"🌍 Перевод файлов на польский...\n\n"
+                f"Обрабатываю: {filename}\n"
+                f"Прогресс: {i}/{total_files}"
+            )
+
+            # Выполняем перевод в executor
+            translated_content = await loop.run_in_executor(
+                None,
+                translate_text_with_chatgpt,
+                content,
+                filename
+            )
+            translated_files[filename] = translated_content
+
+        # Создаем новый архив с переведенными файлами
+        await status_msg.edit_text("📦 Создание архива с переведенными файлами...")
+
+        # Создание архива также в executor
+        translated_zip = await loop.run_in_executor(
+            None,
+            create_translated_zip,
+            zip_content,
+            translated_files
+        )
+
+        # Отправляем результат пользователю
+        await status_msg.edit_text("✅ Перевод завершен! Отправляю архив...")
+
+        # Создаем имя файла для переведенного архива
+        original_name = os.path.splitext(zip_info['name'])[0]
+        translated_filename = f"{original_name}_ES.zip"
+
+        # Отправляем архив
+        translated_file = BufferedInputFile(translated_zip, filename=translated_filename)
+
+        await message.answer_document(
+            translated_file,
+            caption=f"✅ <b>Перевод лендинга завершен!</b>\n\n"
+                   f"📁 ID лендинга: <code>{landing_id}</code>\n"
+                   f"📄 Переведено файлов: {total_files}\n"
+                   f"🌍 Язык: Польский\n\n"
+                   f"Архив содержит переведенные HTML, PHP, JS файлы.",
+            parse_mode="HTML"
+        )
+
+        await status_msg.delete()
+        await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+
+    except Exception as e:
+        # Логируем ошибку в Bugsnag
+        bugsnag.notify(e, meta_data={
+            "function": "process_translation_in_background",
+            "landing_id": landing_id,
+            "user_id": message.from_user.id,
+            "username": message.from_user.username,
+            "error_type": "translation_process_error"
+        })
+
+        # Показываем пользователю понятное сообщение об ошибке
+        await status_msg.edit_text(
+            "❌ Произошла техническая ошибка при обработке лендинга.\n\n"
+            "Ошибка автоматически зарегистрирована для исправления.\n"
+            "Попробуйте позже или обратитесь к администратору."
+        )
+        await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
+
+
 def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str]) -> bytes:
     """Создает новый ZIP архив с переведенными файлами"""
     output_buffer = io.BytesIO()
@@ -275,7 +418,7 @@ async def translate_landing_start(message: Message, state: FSMContext):
 
 @router.message(Form.entering_landing_id)
 async def process_landing_translation(message: Message, state: FSMContext):
-    """Обрабатывает ID лендинга и выполняет перевод"""
+    """Обрабатывает ID лендинга и запускает перевод в фоне"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
@@ -291,121 +434,18 @@ async def process_landing_translation(message: Message, state: FSMContext):
     # Отправляем сообщение о начале обработки
     status_msg = await message.answer("🔄 Начинаю обработку лендинга...\n\n⏳ Поиск папки на Google Drive...")
 
-    try:
-        # Инициализируем Google Drive сервис
-        drive_service = get_google_drive_service()
-        if not drive_service:
-            await status_msg.edit_text("❌ Ошибка подключения к Google Drive. Попробуйте позже.")
-            await state.clear()
-            return
-
-        # Ищем папку с указанным ID
-        await status_msg.edit_text(f"🔄 Поиск папки '{landing_id}' на Google Drive...")
-
-        folder_id = find_folder_by_name(drive_service, landing_id, GOOGLE_DRIVE_FOLDER_ID)
-        if not folder_id:
-            await status_msg.edit_text(
-                f"❌ Папка с ID '{landing_id}' не найдена на Google Drive.\n\n"
-                "Проверьте правильность написания ID лендинга."
-            )
-            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-            await state.clear()
-            return
-
-        # Ищем ZIP архив в папке
-        await status_msg.edit_text("🔄 Поиск архива в папке...")
-
-        zip_info = find_zip_in_folder(drive_service, folder_id)
-        if not zip_info:
-            await status_msg.edit_text(
-                f"❌ Файл 'site.zip' не найден в папке '{landing_id}'.\n\n"
-                "Убедитесь, что в папке есть файл с названием 'site.zip'."
-            )
-            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-            await state.clear()
-            return
-
-        # Скачиваем архив
-        await status_msg.edit_text(f"⬇️ Скачивание архива '{zip_info['name']}'...")
-
-        zip_content = download_file_from_drive(drive_service, zip_info['id'])
-        if not zip_content:
-            await status_msg.edit_text("❌ Ошибка скачивания архива с Google Drive.")
-            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-            await state.clear()
-            return
-
-        # Извлекаем переводимые файлы
-        await status_msg.edit_text("📂 Анализ содержимого архива...")
-
-        translatable_files = extract_translatable_files(zip_content)
-        if not translatable_files:
-            await status_msg.edit_text(
-                "❌ В архиве не найдено файлов для перевода.\n\n"
-                "Поддерживаемые форматы: HTML, PHP, JS"
-            )
-            await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-            await state.clear()
-            return
-
-        # Переводим файлы
-        total_files = len(translatable_files)
-        translated_files = {}
-
-        for i, (filename, content) in enumerate(translatable_files.items(), 1):
-            await status_msg.edit_text(
-                f"🌍 Перевод файлов на польский...\n\n"
-                f"Обрабатываю: {filename}\n"
-                f"Прогресс: {i}/{total_files}"
-            )
-
-            translated_content = translate_text_with_chatgpt(content, filename)
-            translated_files[filename] = translated_content
-
-        # Создаем новый архив с переведенными файлами
-        await status_msg.edit_text("📦 Создание архива с переведенными файлами...")
-
-        translated_zip = create_translated_zip(zip_content, translated_files)
-
-        # Отправляем результат пользователю
-        await status_msg.edit_text("✅ Перевод завершен! Отправляю архив...")
-
-        # Создаем имя файла для переведенного архива
-        original_name = os.path.splitext(zip_info['name'])[0]
-        translated_filename = f"{original_name}_ES.zip"
-
-        # Отправляем архив
-        translated_file = BufferedInputFile(translated_zip, filename=translated_filename)
-
-        await message.answer_document(
-            translated_file,
-            caption=f"✅ <b>Перевод лендинга завершен!</b>\n\n"
-                   f"📁 ID лендинга: <code>{landing_id}</code>\n"
-                   f"📄 Переведено файлов: {total_files}\n"
-                   f"🌍 Язык: Польский\n\n"
-                   f"Архив содержит переведенные HTML, PHP, JS файлы.",
-            parse_mode="HTML"
-        )
-
-        await status_msg.delete()
-        await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
-
-    except Exception as e:
-        # Логируем ошибку в Bugsnag
-        bugsnag.notify(e, meta_data={
-            "function": "process_landing_translation",
-            "landing_id": landing_id,
-            "user_id": message.from_user.id,
-            "username": message.from_user.username,
-            "error_type": "translation_process_error"
-        })
-
-        # Показываем пользователю понятное сообщение об ошибке
-        await status_msg.edit_text(
-            "❌ Произошла техническая ошибка при обработке лендинга.\n\n"
-            "Ошибка автоматически зарегистрирована для исправления.\n"
-            "Попробуйте позже или обратитесь к администратору."
-        )
-
-
+    # Очищаем состояние сразу, чтобы пользователь мог продолжать работать с ботом
     await state.clear()
+
+    # Уведомляем пользователя, что процесс запущен в фоне
+    await message.answer(
+        "📋 <b>Процесс перевода запущен!</b>\n\n"
+        "🔄 Обработка выполняется в фоновом режиме\n"
+        "⚡ Вы можете продолжить работу с ботом\n"
+        "📩 Результат будет отправлен по завершению",
+        parse_mode="HTML",
+        reply_markup=get_menu_keyboard(message.from_user.id)
+    )
+
+    # Запускаем процесс перевода в фоновом режиме
+    asyncio.create_task(process_translation_in_background(landing_id, message, status_msg))
