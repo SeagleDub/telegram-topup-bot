@@ -34,5 +34,6 @@ class Form(StatesGroup):
     entering_pixel_key = State()
 
     # Перевод лендинга
+    choosing_target_language = State()
     entering_landing_id = State()
 
