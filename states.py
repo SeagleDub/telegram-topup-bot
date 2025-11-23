@@ -35,5 +35,6 @@ class Form(StatesGroup):
 
     # Перевод лендинга
     choosing_target_language = State()
+    choosing_target_country = State()
     entering_landing_id = State()
 
