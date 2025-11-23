@@ -268,8 +268,7 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": base_prompt + chunk},
                 ],
-                max_completion_tokens=20000,
-                temperature=0.1  # Более детерминированные ответы
+                max_completion_tokens=20000
             )
 
             translated = response.choices[0].message.content
@@ -587,22 +586,19 @@ async def process_translation_in_background(landing_id: str, target_language: st
             "error_type": "translation_process_error"
         })
 
-        # Показываем пользователю детальное сообщение об ошибке
-        error_msg = str(e)[:500]  # Ограничиваем длину сообщения об ошибке
-
+        # Показываем пользователю общее сообщение об ошибке
         try:
             await status_msg.edit_text(
-                f"❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
-                f"<code>{error_msg}</code>\n\n"
-                f"Ошибка автоматически зарегистрирована для исправления.",
-                parse_mode="HTML"
+                "❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
+                "Ошибка автоматически зарегистрирована для исправления.\n"
+                "Попробуйте позже или обратитесь к администратору."
             )
         except:
             # Если не удается отредактировать статусное сообщение, отправляем новое
             await message.answer(
-                f"❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
-                f"<code>{error_msg}</code>\n\n"
-                f"Ошибка автоматически зарегистрирована для исправления.",
+                "❌ <b>Произошла ошибка при переводе лендинга</b>\n\n"
+                "Ошибка автоматически зарегистрирована для исправления.\n"
+                "Попробуйте позже или обратитесь к администратору.",
                 parse_mode="HTML"
             )
 
