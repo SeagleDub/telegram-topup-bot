@@ -102,8 +102,30 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
                     continue
 
                 if file_ext in TRANSLATABLE_EXTENSIONS:
-                    # Пытаемся прочитать файл как UTF-8, затем windows-1251
-                    content = zip_ref.read(file_info.filename).decode('utf-8')
+                    # Пытаемся прочитать файл с разными кодировками
+                    file_bytes = zip_ref.read(file_info.filename)
+                    content = None
+
+                    # Список кодировок для попыток декодирования
+                    encodings = ['utf-8', 'windows-1251', 'cp1252', 'iso-8859-1', 'latin-1']
+
+                    for encoding in encodings:
+                        try:
+                            content = file_bytes.decode(encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+
+                    # Если не удалось декодировать ни одной кодировкой, выбрасываем ошибку
+                    if content is None:
+                        raise UnicodeDecodeError(
+                            'multiple_encodings',
+                            file_bytes,
+                            0,
+                            len(file_bytes),
+                            f"Не удалось декодировать файл {file_info.filename} ни одной из кодировок: {', '.join(encodings)}"
+                        )
+
                     translatable_files[file_info.filename] = content
 
     return translatable_files
