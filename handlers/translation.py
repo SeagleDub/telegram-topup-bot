@@ -33,7 +33,7 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # Расширения файлов для перевода
 TRANSLATABLE_EXTENSIONS = {'.html', '.htm', '.php', '.js'}
 SEM_LIMIT = 4   # сколько запросов одновременно максимум
-CHUNK_SIZE = 5000
+CHUNK_SIZE = 10000
 
 def get_google_drive_service():
     """Создает сервис для работы с Google Drive"""
@@ -106,8 +106,151 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
 
     return translatable_files
 
-def split_into_chunks(s, size):
-    return [s[i:i + size] for i in range(0, len(s), size)]
+def split_into_chunks(text: str, size: int, filename: str = "") -> List[str]:
+    """
+    Разделяет текст на чанки с учетом структуры файла,
+    избегая разделения важных блоков кода или разметки
+    """
+    if len(text) <= size:
+        return [text]
+
+    file_ext = os.path.splitext(filename)[1].lower() if filename else ""
+    chunks = []
+
+    # Для HTML/PHP файлов - разделяем по тегам и блокам
+    if file_ext in ['.html', '.htm', '.php']:
+        return split_html_chunks(text, size)
+
+    # Для JS файлов - разделяем по функциям и блокам
+    elif file_ext == '.js':
+        return split_js_chunks(text, size)
+
+    # Для остальных файлов - разделяем по параграфам и предложениям
+    else:
+        return split_text_chunks(text, size)
+
+
+def split_html_chunks(text: str, max_size: int) -> List[str]:
+    """Разделение HTML/PHP кода на чанки с сохранением целостности тегов"""
+    chunks = []
+    current_chunk = ""
+
+    # Находим основные блоки: теги, комментарии, скрипты
+    patterns = [
+        r'<!--.*?-->',  # HTML комментарии
+        r'<script[^>]*>.*?</script>',  # Скрипт теги
+        r'<style[^>]*>.*?</style>',    # Стиль теги
+        r'<[^>]+>',     # HTML теги
+        r'[^<]+',       # Текст между тегами
+    ]
+
+    combined_pattern = '|'.join(f'({pattern})' for pattern in patterns)
+
+    for match in re.finditer(combined_pattern, text, re.DOTALL | re.IGNORECASE):
+        block = match.group()
+
+        # Если добавление блока превышает размер чанка
+        if len(current_chunk) + len(block) > max_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = block
+        else:
+            current_chunk += block
+
+    # Добавляем последний чанк
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks if chunks else [text]
+
+
+def split_js_chunks(text: str, max_size: int) -> List[str]:
+    """Разделение JavaScript кода на чанки с сохранением целостности функций"""
+    chunks = []
+    current_chunk = ""
+
+    # Разделяем по строкам для анализа
+    lines = text.split('\n')
+
+    for line in lines:
+        line_with_newline = line + '\n'
+
+        # Если добавление строки превышает размер чанка
+        if len(current_chunk) + len(line_with_newline) > max_size and current_chunk:
+            # Проверяем, не находимся ли мы внутри функции или блока
+            if not is_inside_js_block(current_chunk):
+                chunks.append(current_chunk.strip())
+                current_chunk = line_with_newline
+            else:
+                current_chunk += line_with_newline
+        else:
+            current_chunk += line_with_newline
+
+    # Добавляем последний чанк
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks if chunks else [text]
+
+
+def split_text_chunks(text: str, max_size: int) -> List[str]:
+    """Разделение обычного текста на чанки по предложениям и параграфам"""
+    chunks = []
+    current_chunk = ""
+
+    # Разделяем по параграфам
+    paragraphs = text.split('\n\n')
+
+    for paragraph in paragraphs:
+        paragraph_with_breaks = paragraph + '\n\n'
+
+        # Если параграф слишком большой, разделяем по предложениям
+        if len(paragraph) > max_size:
+            sentences = re.split(r'([.!?]+\s+)', paragraph)
+            temp_chunk = ""
+
+            for sentence in sentences:
+                if len(temp_chunk) + len(sentence) > max_size and temp_chunk:
+                    if current_chunk:
+                        current_chunk += temp_chunk
+                        if len(current_chunk) > max_size:
+                            chunks.append(current_chunk.strip())
+                            current_chunk = ""
+                    else:
+                        chunks.append(temp_chunk.strip())
+                    temp_chunk = sentence
+                else:
+                    temp_chunk += sentence
+
+            if temp_chunk:
+                current_chunk += temp_chunk + '\n\n'
+
+        # Если добавление параграфа превышает размер чанка
+        elif len(current_chunk) + len(paragraph_with_breaks) > max_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            current_chunk = paragraph_with_breaks
+        else:
+            current_chunk += paragraph_with_breaks
+
+    # Добавляем последний чанк
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks if chunks else [text]
+
+
+def is_inside_js_block(code: str) -> bool:
+    """Проверяет, находимся ли мы внутри незакрытого блока JavaScript"""
+    open_braces = code.count('{')
+    close_braces = code.count('}')
+    open_parens = code.count('(')
+    close_parens = code.count(')')
+    open_brackets = code.count('[')
+    close_brackets = code.count(']')
+
+    # Если есть незакрытые блоки, то мы внутри функции/объекта
+    return (open_braces != close_braces or
+            open_parens != close_parens or
+            open_brackets != close_brackets)
 
 
 async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
@@ -129,7 +272,7 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
 async def translate_text_with_chatgpt_async(text: str, filename: str) -> str:
     """Асинхронный перевод файла по чанкам с семафором"""
 
-    chunks = split_into_chunks(text, CHUNK_SIZE)
+    chunks = split_into_chunks(text, CHUNK_SIZE, filename)
     file_ext = os.path.splitext(filename)[1].lower()
 
     # >>> ВАЖНО: обновленное системное правило <<<
