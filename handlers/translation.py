@@ -608,36 +608,8 @@ async def translate_landing_start(message: Message, state: FSMContext):
 
     m1 = await message.answer(
         "🌍 <b>Перевод лендинга</b>\n\n"
-        "Введите целевой язык для перевода:\n\n"
-        "Примеры: <i>польский, испанский, немецкий, французский, итальянский, португальский, чешский, турецкий</i> и т.д.",
-        parse_mode="HTML"
-    )
-    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
-
-    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
-    await state.set_state(Form.choosing_target_language)
-
-@router.message(Form.choosing_target_language)
-async def process_language_choice(message: Message, state: FSMContext):
-    """Обрабатывает выбор языка перевода"""
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
-        return
-
-    # Валидация введенного языка
-    target_language = message.text.strip()
-    if not target_language or len(target_language) < 2:
-        await message.answer("❌ Название языка должно содержать минимум 2 символа. Попробуйте еще раз.")
-        return
-
-    # Сохраняем выбранный язык в состоянии
-    await state.update_data(selected_language=target_language)
-
-    m1 = await message.answer(
-        f"🌍 <b>Перевод лендинга на {target_language}</b>\n\n"
-        f"Введите ID лендинга (название папки на Google Drive):\n\n"
-        f"Например: <code>landing_123</code>",
+        "Введите ID лендинга (название папки на Google Drive):\n\n"
+        "Например: <code>landing_123</code>",
         parse_mode="HTML"
     )
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
@@ -646,8 +618,8 @@ async def process_language_choice(message: Message, state: FSMContext):
     await state.set_state(Form.entering_landing_id)
 
 @router.message(Form.entering_landing_id)
-async def process_landing_translation(message: Message, state: FSMContext):
-    """Обрабатывает ID лендинга и запускает перевод в фоне"""
+async def process_landing_id(message: Message, state: FSMContext):
+    """Обрабатывает ID лендинга и переходит к выбору языка"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
@@ -660,12 +632,40 @@ async def process_landing_translation(message: Message, state: FSMContext):
         await message.answer("❌ ID лендинга должен содержать минимум 3 символа.")
         return
 
-    # Получаем выбранный язык из состояния
-    data = await state.get_data()
-    target_language = data.get('selected_language')
+    # Сохраняем ID лендинга в состоянии
+    await state.update_data(landing_id=landing_id)
 
-    if not target_language or not isinstance(target_language, str):
-        await message.answer("❌ Ошибка: язык не выбран. Начните процесс заново.")
+    m1 = await message.answer(
+        f"🌍 <b>Перевод лендинга: {landing_id}</b>\n\n"
+        f"Введите целевой язык для перевода:\n\n"
+        f"Примеры: <i>польский, испанский, немецкий, французский, итальянский, португальский, чешский, турецкий</i> и т.д.",
+        parse_mode="HTML"
+    )
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.choosing_target_language)
+
+@router.message(Form.choosing_target_language)
+async def process_language_choice(message: Message, state: FSMContext):
+    """Обрабатывает выбор языка и запускает перевод"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
+        return
+
+    # Валидация введенного языка
+    target_language = message.text.strip()
+    if not target_language or len(target_language) < 2:
+        await message.answer("❌ Название языка должно содержать минимум 2 символа. Попробуйте еще раз.")
+        return
+
+    # Получаем ID лендинга из состояния
+    data = await state.get_data()
+    landing_id = data.get('landing_id')
+
+    if not landing_id:
+        await message.answer("❌ Ошибка: ID лендинга не найден. Начните процесс заново.")
         await state.clear()
         return
 
@@ -678,6 +678,7 @@ async def process_landing_translation(message: Message, state: FSMContext):
     # Уведомляем пользователя, что процесс запущен в фоне
     await message.answer(
         f"📋 <b>Процесс перевода запущен!</b>\n\n"
+        f"📁 ID лендинга: <code>{landing_id}</code>\n"
         f"🌍 Целевой язык: {target_language.title()}\n"
         f"🔄 Обработка выполняется в фоновом режиме\n"
         f"⚡ Вы можете продолжить работу с ботом\n"
