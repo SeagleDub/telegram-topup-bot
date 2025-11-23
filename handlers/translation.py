@@ -285,7 +285,7 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
 
         for attempt in range(max_retries):
             response = await client.chat.completions.create(
-                model="gpt-5-nano",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": base_prompt + chunk},
