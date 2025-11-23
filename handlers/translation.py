@@ -27,11 +27,13 @@ from config import OPENAI_API_KEY, GOOGLE_DRIVE_FOLDER_ID
 router = Router()
 
 # Настройка OpenAI
-from openai import OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+from openai import AsyncOpenAI
+client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # Расширения файлов для перевода
 TRANSLATABLE_EXTENSIONS = {'.html', '.htm', '.php', '.js'}
+SEM_LIMIT = 4   # сколько запросов одновременно максимум
+CHUNK_SIZE = 5000
 
 def get_google_drive_service():
     """Создает сервис для работы с Google Drive"""
@@ -104,116 +106,148 @@ def extract_translatable_files(zip_content: bytes) -> Dict[str, str]:
 
     return translatable_files
 
-def translate_text_with_chatgpt(text: str, filename: str) -> str:
-    """Переводит текст с помощью ChatGPT API с разбиением на чанки"""
+def split_into_chunks(s, size):
+    return [s[i:i + size] for i in range(0, len(s), size)]
 
-    if not client:
-        return text
 
-    CHUNK_SIZE = 10000
-
-    def split_into_chunks(s, size):
-        return [s[i:i + size] for i in range(0, len(s), size)]
-
-    chunks = split_into_chunks(text, CHUNK_SIZE)
-    translated_chunks = []
-
-    file_ext = os.path.splitext(filename)[1].lower()
-
-    # Системное правило – строго запрещаем комментарии и болтовню
-    system_prompt = """
-Ты профессиональный переводчик веб-контента.
-
-Строгие правила:
-- Отвечай ТОЛЬКО итоговым переведённым фрагментом.
-- Не добавляй комментариев, пояснений, примечаний и фраз типа:
-  «Вот перевод», «Первая часть», «Если нужно — продолжу», «Спасибо», «Готово», и т.п.
-- Никаких описаний процесса.
-- Только чистый переведённый результат.
-
-Если модель пытается объяснять – просто игнорируй и выводи только результат.
-"""
-
-    # Базовые подсказки для типов файлов
-    if file_ext in ['.html', '.htm']:
-        base_prompt = """
-Переведи ТОЛЬКО текстовое содержимое этого HTML фрагмента на польский язык.
-Сохрани:
-- HTML-разметку,
-- структуру,
-- теги,
-- атрибуты,
-- порядок текста.
-
-Переводи:
-- текст между тегами,
-- alt/title/placeholder.
-
-НЕ переводи:
-- class, id, URL,
-- названия файлов,
-- технические атрибуты,
-- скрипты.
-
-Верни ТОЛЬКО готовый HTML фрагмент. Фрагмент:
-"""
-    elif file_ext == '.php':
-        base_prompt = """
-Переведи ТОЛЬКО пользовательский текст в этом фрагменте PHP на польский.
-
-Сохрани:
-- PHP/HTML код,
-- теги,
-- переменные,
-- функции,
-- синтаксис.
-
-Переводи:
-- строки в кавычках, выводимые пользователю.
-
-НЕ переводи:
-- названия переменных,
-- функции,
-- классы,
-- комментарии.
-
-Верни ТОЛЬКО готовый результат. Фрагмент:
-"""
-    elif file_ext == '.js':
-        base_prompt = """
-Переведи ТОЛЬКО пользовательские читаемые строки в этом JavaScript фрагменте на польский язык.
-
-Не изменяй:
-- логику,
-- переменные,
-- код.
-
-Верни ТОЛЬКО готовый результат без лишних пояснений. Фрагмент:
-"""
-    else:
-        base_prompt = """
-Переведи этот текст на польский язык, сохранив форматирование и структуру.
-Верни ТОЛЬКО готовый текст без пояснений. Фрагмент:
-"""
-
-    # Перевод чанков по одному
-    for chunk in chunks:
-        prompt = base_prompt + chunk
-
-        response = client.chat.completions.create(
+async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
+    """Перевод одного чанка с контролем параллельности"""
+    async with sem:
+        response = await client.chat.completions.create(
             model="gpt-5-nano",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": base_prompt + chunk},
             ],
             max_completion_tokens=20000
         )
 
-        translation = response.choices[0].message.content.strip()
+        translated = response.choices[0].message.content.strip()
+        return idx, translated
 
-        translated_chunks.append(translation)
 
-    return "".join(translated_chunks)
+async def translate_text_with_chatgpt_async(text: str, filename: str) -> str:
+    """Асинхронный перевод файла по чанкам с семафором"""
+
+    chunks = split_into_chunks(text, CHUNK_SIZE)
+    file_ext = os.path.splitext(filename)[1].lower()
+
+    # >>> ВАЖНО: обновленное системное правило <<<
+    system_prompt = """
+Ты профессиональный переводчик веб-контента.
+
+Строгие правила:
+- Отвечай ТОЛЬКО конечным готовым переводом.
+- Не добавляй комментариев, пояснений и служебных фраз.
+- Делай ПОЛНЫЙ перевод без пропусков. Нельзя оставлять текст в оригинале.
+- Все имена людей, фамилии, места, города и названия компаний
+  адаптируй и локализируй под культуру целевого языка
+  (например, на польский — польские или нейтральные аналоги).
+- Если исходное имя или город нельзя локализовать — адаптируй аналогом
+  без указания, что ты его изменил.
+- Сохраняй техническую разметку, теги, кавычки, переменные и код без изменений.
+
+Если модель пытается объяснять — игнорируй и выводи только результат.
+"""
+
+    if file_ext in ['.html', '.htm']:
+        base_prompt = """
+Переведи ТОЛЬКО текстовое содержимое этого HTML фрагмента на польский язык.
+
+Сохрани:
+- HTML-разметку, структуру и атрибуты.
+Переводи:
+- текст между тегами
+- значения alt, title, placeholder.
+
+Локализуй:
+- имена,
+- фамилии,
+- компании,
+- места,
+- локации.
+
+Не переводи:
+- имена классов,
+- id,
+- URL,
+- названия файлов.
+
+Верни ТОЛЬКО готовый HTML. Фрагмент:
+"""
+    elif file_ext == '.php':
+        base_prompt = """
+Переведи ТОЛЬКО пользовательский текст в этом фрагменте PHP на польский язык.
+
+Сохрани:
+- весь PHP/HTML код,
+- функции,
+- теги,
+- переменные.
+
+Переводи:
+- только строки в кавычках, выводимые пользователю.
+
+Локализуй:
+- имена людей,
+- города,
+- места и любые географические ссылки.
+
+Не переводи:
+- комментарии,
+- переменные,
+- названия функций и классов.
+
+Верни ТОЛЬКО готовый код. Фрагмент:
+"""
+    elif file_ext == '.js':
+        base_prompt = """
+Переведи ТОЛЬКО читаемые строки интерфейса в этом JavaScript на польский язык.
+
+Сохрани код и логику без изменений.
+
+Локализуй:
+- имена людей,
+- места,
+- географические названия.
+
+Верни ТОЛЬКО готовый JS фрагмент. Фрагмент:
+"""
+    else:
+        base_prompt = """
+Переведи этот текст на польский язык максимально тщательно:
+
+Требования:
+- полный перевод без пропуска фраз;
+- локализуй имена, места и названия;
+- не добавляй комментариев;
+- сохрани формат и структуру.
+
+Фрагмент:
+"""
+
+    # Семафор для ограничения количества одновременных запросов
+    sem = asyncio.Semaphore(SEM_LIMIT)
+
+    # Стартуем параллельные задачи
+    tasks = [
+        translate_chunk(idx, chunk, system_prompt, base_prompt, sem)
+        for idx, chunk in enumerate(chunks)
+    ]
+
+    # Дожидаемся всех
+    results = await asyncio.gather(*tasks)
+
+    # Результаты нужно отсортировать по индексу
+    results.sort(key=lambda x: x[0])
+
+    return "".join(part for _, part in results)
+
+
+def translate_text_with_chatgpt(text: str, filename: str) -> str:
+    return asyncio.run(
+        translate_text_with_chatgpt_async(text, filename)
+    )
 
 
 async def process_translation_in_background(landing_id: str, message: Message, status_msg: Message):
