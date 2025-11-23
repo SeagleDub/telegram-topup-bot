@@ -205,8 +205,7 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            max_completion_tokens=20000,
-            temperature=0
+            max_completion_tokens=20000
         )
 
         translation = response.choices[0].message.content.strip()
