@@ -210,17 +210,6 @@ def translate_text_with_chatgpt(text: str, filename: str) -> str:
 
         translation = response.choices[0].message.content.strip()
 
-        # На всякий случай удаляем фразы, если вдруг они всё же проскочат
-        forbidden_prefixes = [
-            "вот перевод", "перевод", "первый блок", "первая часть",
-            "спасибо", "я могу", "готово", "далее", "следующий"
-        ]
-        lowered = translation.lower()
-
-        if any(lowered.startswith(p) for p in forbidden_prefixes):
-            # Обрезаем первую строку, если она болтовня
-            translation = "\n".join(translation.split("\n")[1:]).strip()
-
         translated_chunks.append(translation)
 
     return "".join(translated_chunks)
