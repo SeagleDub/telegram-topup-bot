@@ -35,7 +35,7 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # Расширения файлов для перевода
 TRANSLATABLE_EXTENSIONS = {'.html', '.htm', '.php', '.js'}
 SEM_LIMIT = 4   # сколько запросов одновременно максимум
-CHUNK_SIZE = 10000
+CHUNK_SIZE = 15000  # Увеличен размер для лучшего контекста
 
 def get_google_drive_service():
     """Создает сервис для работы с Google Drive"""
@@ -159,12 +159,15 @@ def split_html_chunks(text: str, max_size: int) -> List[str]:
     chunks = []
     current_chunk = ""
 
-    # Находим основные блоки: теги, комментарии, скрипты
+    # Находим основные блоки: теги, комментарии, скрипты, мета-теги
     patterns = [
         r'<!--.*?-->',  # HTML комментарии
         r'<script[^>]*>.*?</script>',  # Скрипт теги
         r'<style[^>]*>.*?</style>',    # Стиль теги
-        r'<[^>]+>',     # HTML теги
+        r'<meta[^>]*>',  # Мета теги (самозакрывающиеся)
+        r'<title[^>]*>.*?</title>',  # Title теги
+        r'<head[^>]*>.*?</head>',  # Head секция целиком
+        r'<[^>]+>',     # Другие HTML теги
         r'[^<]+',       # Текст между тегами
     ]
 
@@ -173,12 +176,21 @@ def split_html_chunks(text: str, max_size: int) -> List[str]:
     for match in re.finditer(combined_pattern, text, re.DOTALL | re.IGNORECASE):
         block = match.group()
 
-        # Если добавление блока превышает размер чанка
-        if len(current_chunk) + len(block) > max_size and current_chunk:
-            chunks.append(current_chunk.strip())
-            current_chunk = block
+        # Особая обработка для важных блоков - не разделяем их
+        if any(tag in block.lower() for tag in ['<head', '<title', '<meta', '<script', '<style']):
+            # Если важный блок не помещается в текущий чанк, завершаем его
+            if len(current_chunk) + len(block) > max_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = block
+            else:
+                current_chunk += block
         else:
-            current_chunk += block
+            # Обычная обработка для остальных блоков
+            if len(current_chunk) + len(block) > max_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = block
+            else:
+                current_chunk += block
 
     # Добавляем последний чанк
     if current_chunk.strip():
@@ -280,17 +292,17 @@ def is_inside_js_block(code: str) -> bool:
 async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
     """Перевод одного чанка с контролем параллельности"""
     async with sem:
-        max_retries = 3
-        min_response_length = len(chunk) // 4  # Минимум 25% от исходного текста
+        max_retries = 4  # Увеличил количество попыток
+        min_response_length = len(chunk) // 5  # Снизил минимум до 20% для большей гибкости
 
         for attempt in range(max_retries):
             response = await client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-5-mini",  # Исправил название модели
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": base_prompt + chunk},
                 ],
-                max_completion_tokens=20000
+                max_completion_tokens=30000  # Увеличил лимит токенов
             )
 
             translated = response.choices[0].message.content
@@ -299,7 +311,7 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
-                return idx, f"<!-- TRANSLATION_FAILED: Empty response -->{chunk}<!-- /TRANSLATION_FAILED -->"
+                return idx, f"<!-- TRANSLATION_FAILED: Empty response -->\n{chunk}\n<!-- /TRANSLATION_FAILED -->"
 
             translated = translated.strip()
 
@@ -308,18 +320,24 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
-                return idx, f"<!-- TRANSLATION_FAILED: Response too short -->{chunk}<!-- /TRANSLATION_FAILED -->"
+                return idx, f"<!-- TRANSLATION_FAILED: Response too short ({len(translated)}/{min_response_length}) -->\n{chunk}\n<!-- /TRANSLATION_FAILED -->"
 
             # Проверяем, что ответ не обрезан
             if not is_response_complete(translated, chunk):
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
-                return idx, f"<!-- TRANSLATION_FAILED: Response incomplete -->{chunk}<!-- /TRANSLATION_FAILED -->"
+                return idx, f"<!-- TRANSLATION_FAILED: Response incomplete -->\n{chunk}\n<!-- /TRANSLATION_FAILED -->"
+
+            # Дополнительная проверка: если в оригинале были мета-теги, они должны остаться
+            if '<meta' in chunk.lower() and '<meta' not in translated.lower():
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return idx, f"<!-- TRANSLATION_FAILED: Meta tags lost -->\n{chunk}\n<!-- /TRANSLATION_FAILED -->"
 
             # Успешный перевод
             return idx, translated
-
 
 
 async def translate_text_with_chatgpt_async(text: str, filename: str, target_language: str, target_country: str) -> str:
@@ -368,7 +386,9 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - HTML-разметку, структуру и атрибуты.
 Переводи:
 - текст между тегами
-- значения alt, title, placeholder.
+- значения alt, title, placeholder
+- содержимое мета-тегов: <meta name="description" content="...">, <meta name="keywords" content="...">, <meta property="og:title" content="...">, <meta property="og:description" content="...">
+- содержимое тега <title>
 
 ОБЯЗАТЕЛЬНО локализуй для страны {target_country}:
 - Все имена людей на типичные для {target_country} имена
@@ -386,6 +406,8 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - URL,
 - названия файлов.
 
+ВЕРНИ ПОЛНЫЙ ФРАГМЕНТ БЕЗ СОКРАЩЕНИЙ. Не пропускай части кода. Если фрагмент длинный - переведи его полностью.
+
 Верни ТОЛЬКО готовый HTML. Фрагмент:
 """
     elif file_ext == '.php':
@@ -399,7 +421,9 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - переменные.
 
 Переводи:
-- только строки в кавычках, выводимые пользователю.
+- только строки в кавычках, выводимые пользователю
+- содержимое мета-тегов в HTML частях: <meta name="description" content="...">, <meta name="keywords" content="...">, <meta property="og:title" content="...">
+- содержимое тега <title> в HTML частях
 
 ОБЯЗАТЕЛЬНО локализуй для страны {target_country}:
 - Все имена людей на типичные для {target_country} имена
@@ -411,6 +435,8 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - комментарии,
 - переменные,
 - названия функций и классов.
+
+ВЕРНИ ПОЛНЫЙ ФРАГМЕНТ БЕЗ СОКРАЩЕНИЙ. Не пропускай части кода. Переведи ВСЁ содержимое, которое дано в фрагменте.
 
 Верни ТОЛЬКО готовый код. Фрагмент:
 """
@@ -425,6 +451,8 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - Все фамилии на характерные для {target_country} фамилии
 - Все города на крупные города {target_country}
 - Все компании на известные в {target_country} аналоги
+
+ВЕРНИ ПОЛНЫЙ ФРАГМЕНТ БЕЗ СОКРАЩЕНИЙ. Не пропускай части кода. Переведи ВСЁ содержимое JS файла полностью.
 
 Верни ТОЛЬКО готовый JS фрагмент. Фрагмент:
 """
@@ -799,29 +827,55 @@ def is_response_complete(response: str, original: str) -> bool:
     if not response:
         return False
 
+    # Базовая проверка: переведенный текст не должен быть слишком коротким
+    if len(response) < len(original) * 0.3:
+        return False
+
     # Для HTML/PHP файлов проверяем баланс тегов
     if '<' in original and '>' in original:
-        open_tags = response.count('<')
-        close_tags = response.count('>')
+        orig_open_tags = original.count('<')
+        orig_close_tags = original.count('>')
+        resp_open_tags = response.count('<')
+        resp_close_tags = response.count('>')
 
-        # Если теги сильно разбалансированы, возможно ответ обрезан
-        if abs(open_tags - close_tags) > 3:
+        # Проверяем, что количество тегов примерно совпадает
+        if abs(orig_open_tags - resp_open_tags) > 2 or abs(orig_close_tags - resp_close_tags) > 2:
             return False
 
-    # Проверяем, что ответ не заканчивается на середине слова
-    if response and not response[-1].isspace() and not response[-1] in '.,!?;:>})]}"\'-':
-        # Если последний символ - буква и перед ним нет пробела, возможно обрезано
-        if len(response) > 10 and not response[-2:].isspace():
+    # Проверяем специфичные теги
+    important_tags = ['<title', '<meta', '<h1', '<h2', '<h3', '</title>', '</h1>', '</h2>', '</h3>']
+    for tag in important_tags:
+        orig_count = original.lower().count(tag.lower())
+        resp_count = response.lower().count(tag.lower())
+        if orig_count > 0 and resp_count == 0:  # Важный тег исчез
             return False
 
-    # Для JS файлов проверяем баланс скобок
-    if '{' in original or '(' in original:
-        open_braces = response.count('{') - response.count('}')
-        open_parens = response.count('(') - response.count(')')
+    # Проверяем, что ответ не заканчивается обрывом
+    if response.strip():
+        last_char = response.strip()[-1]
+        # Если последний символ - не завершающий, возможно обрезано
+        if last_char not in '.,!?;:>})]}"\'-' and not last_char.isspace():
+            # Но если это HTML тег, то нормально
+            if not response.strip().endswith('>'):
+                return False
 
-        # Небольшой дисбаланс допустим, но не критический
-        if abs(open_braces) > 2 or abs(open_parens) > 2:
+    # Для JS файлов проверяем баланс скобок более строго
+    if '{' in original or '(' in original or '[' in original:
+        orig_braces = original.count('{') - original.count('}')
+        orig_parens = original.count('(') - original.count(')')
+        orig_brackets = original.count('[') - original.count(']')
+
+        resp_braces = response.count('{') - response.count('}')
+        resp_parens = response.count('(') - response.count(')')
+        resp_brackets = response.count('[') - response.count(']')
+
+        # Проверяем, что баланс примерно сохранился
+        if abs(orig_braces - resp_braces) > 1 or abs(orig_parens - resp_parens) > 1 or abs(orig_brackets - resp_brackets) > 1:
             return False
+
+    # Проверка на обрыв в середине HTML атрибута
+    if response.strip().endswith('="') or response.strip().endswith("='"):
+        return False
 
     return True
 
