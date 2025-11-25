@@ -37,4 +37,5 @@ class Form(StatesGroup):
     choosing_target_language = State()
     choosing_target_country = State()
     entering_landing_id = State()
+    entering_offer_details = State()
 

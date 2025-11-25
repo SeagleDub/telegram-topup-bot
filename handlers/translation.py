@@ -340,13 +340,28 @@ async def translate_chunk(idx, chunk, system_prompt, base_prompt, sem):
             return idx, translated
 
 
-async def translate_text_with_chatgpt_async(text: str, filename: str, target_language: str, target_country: str) -> str:
+async def translate_text_with_chatgpt_async(text: str, filename: str, target_language: str, target_country: str, offer_name: str = None, offer_price: str = None) -> str:
     """Асинхронный перевод файла по чанкам с семафором"""
 
     chunks = split_into_chunks(text, CHUNK_SIZE, filename)
     file_ext = os.path.splitext(filename)[1].lower()
 
     # Динамический системный промпт на основе выбранного языка и страны
+    offer_instructions = ""
+    if offer_name and offer_price:
+        offer_instructions = f"""
+
+ДОПОЛНИТЕЛЬНАЯ ЗАДАЧА - ЗАМЕНА ОФФЕРА:
+- ОБЯЗАТЕЛЬНО найди и замени название продукта/услуги в тексте на: "{offer_name}"
+- ОБЯЗАТЕЛЬНО найди и замени цену/стоимость в тексте на: "{offer_price}"
+- Ищи названия продуктов, услуг, товаров и заменяй их на указанное название оффера
+- Ищи цены, стоимость, суммы и заменяй их на указанную цену оффера
+- Делай это умно - если видишь похожий по смыслу продукт, замени его название
+- Если видишь цену в любой валюте, замени её на новую цену
+- НЕ заменяй технические названия, классы, переменные - только пользовательский контент
+- НЕ упоминай о том, что ты что-то заменил - просто делай это
+"""
+
     system_prompt = f"""
 Ты профессиональный переводчик веб-контента с экспертизой в культурной адаптации.
 
@@ -372,6 +387,8 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
 - Фамилии: Smith/Johnson → найди распространенные фамилии в {target_country}
 - Города: New York/London → найди крупные города {target_country}
 - Компании: заменяй на известные в {target_country} бренды
+
+{offer_instructions}
 
 - Сохраняй техническую разметку, теги, кавычки, переменные и код без изменений.
 
@@ -491,13 +508,13 @@ async def translate_text_with_chatgpt_async(text: str, filename: str, target_lan
     return "".join(part for _, part in results)
 
 
-def translate_text_with_chatgpt(text: str, filename: str, target_language: str, target_country: str) -> str:
+def translate_text_with_chatgpt(text: str, filename: str, target_language: str, target_country: str, offer_name: str = None, offer_price: str = None) -> str:
     return asyncio.run(
-        translate_text_with_chatgpt_async(text, filename, target_language, target_country)
+        translate_text_with_chatgpt_async(text, filename, target_language, target_country, offer_name, offer_price)
     )
 
 
-async def process_translation_in_background(landing_id: str, target_language: str, target_country: str, message: Message, status_msg: Message):
+async def process_translation_in_background(landing_id: str, target_language: str, target_country: str, message: Message, status_msg: Message, offer_name: str = None, offer_price: str = None):
     """Выполняет перевод лендинга в фоновом режиме"""
     try:
         # Инициализируем Google Drive сервис
@@ -584,7 +601,9 @@ async def process_translation_in_background(landing_id: str, target_language: st
                 content,
                 filename,
                 target_language,
-                target_country
+                target_country,
+                offer_name,
+                offer_price
             )
             translated_files[filename] = translated_content
 
@@ -610,13 +629,19 @@ async def process_translation_in_background(landing_id: str, target_language: st
         # Отправляем архив
         translated_file = BufferedInputFile(translated_zip, filename=translated_filename)
 
+        # Формируем информацию об оффере для финального сообщения
+        offer_caption = ""
+        if offer_name and offer_price:
+            offer_caption = f"💰 Оффер: {offer_name} за {offer_price}\n"
+
         await message.answer_document(
             translated_file,
             caption=f"✅ <b>Перевод лендинга завершен!</b>\n\n"
                    f"📁 ID лендинга: <code>{landing_id}</code>\n"
                    f"📄 Переведено файлов: {total_files}\n"
                    f"🌍 Язык: {target_language.title()}\n"
-                   f"🏳️ Локализация: {target_country.title()}\n\n"
+                   f"🏳️ Локализация: {target_country.title()}\n"
+                   f"{offer_caption}\n"
                    f"Архив содержит переведенные HTML, PHP, JS файлы с локализацией имен и названий.",
             parse_mode="HTML"
         )
@@ -777,7 +802,7 @@ async def process_language_choice(message: Message, state: FSMContext):
 
 @router.message(Form.choosing_target_country)
 async def process_country_choice(message: Message, state: FSMContext):
-    """Обрабатывает выбор страны и запускает перевод"""
+    """Обрабатывает выбор страны и переходит к вводу данных оффера"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
@@ -789,15 +814,74 @@ async def process_country_choice(message: Message, state: FSMContext):
         await message.answer("❌ Название страны должно содержать минимум 2 символа. Попробуйте еще раз.")
         return
 
-    # Получаем все данные из состояния
+    # Сохраняем страну в состоянии
+    await state.update_data(target_country=target_country)
+
+    # Получаем данные для отображения
     data = await state.get_data()
     landing_id = data.get('landing_id')
     target_language = data.get('target_language')
 
-    if not landing_id or not target_language:
+    m1 = await message.answer(
+        f"💰 <b>Настройка оффера</b>\n\n"
+        f"📁 ID лендинга: {landing_id}\n"
+        f"🌍 Язык перевода: {target_language}\n"
+        f"🏳️ Страна: {target_country}\n\n"
+        f"Введите название и цену оффера для автоматической замены:\n\n"
+        f"<b>Примеры:</b>\n"
+        f"• <code>Ябаран | 1990 рублей</code>\n"
+        f"• <code>Факми - $49.99</code>\n"
+        f"• <code>Флюгегехаймен, 39 евро</code>\n"
+        f"• <code>Заябок за 2990 руб</code>\n\n"
+        f"Или введите <b>Ничего не меняй</b> чтобы пропустить этот шаг.",
+        parse_mode="HTML"
+    )
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.entering_offer_details)
+
+@router.message(Form.entering_offer_details)
+async def process_offer_details(message: Message, state: FSMContext):
+    """Обрабатывает данные оффера и запускает перевод"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
+        return
+
+    # Получаем все данные из состояния
+    data = await state.get_data()
+    landing_id = data.get('landing_id')
+    target_language = data.get('target_language')
+    target_country = data.get('target_country')
+
+    if not landing_id or not target_language or not target_country:
         await message.answer("❌ Ошибка: данные не найдены. Начните процесс заново.")
         await state.clear()
         return
+
+    # Обрабатываем данные оффера
+    offer_name = None
+    offer_price = None
+
+    user_input = message.text.strip()
+
+    if user_input.lower() not in ["ничего не меняй", "ничего не менять", "пропустить", "skip", "нет", "без изменений"]:
+        # Используем гибкую функцию парсинга
+        offer_name, offer_price = parse_offer_input(user_input)
+
+        if not offer_name or not offer_price:
+            await message.answer(
+                f"❌ <b>Не удалось найти название и цену</b>\n\n"
+                f"Попробуйте один из форматов:\n"
+                f"• <code>Ябаран | 1990 рублей</code>\n"
+                f"• <code>Факми - $49.99</code>\n"
+                f"• <code>Флюгегехаймен, 39 евро</code>\n"
+                f"• <code>Заябок за 2990 руб</code>\n\n"
+                f"Или введите <b>Ничего не меняй</b> чтобы пропустить этот шаг.",
+                parse_mode="HTML"
+            )
+            return
 
     # Отправляем сообщение о начале обработки
     status_msg = await message.answer("🔄 Начинаю обработку лендинга...\n\n⏳ Поиск папки на Google Drive...")
@@ -806,11 +890,18 @@ async def process_country_choice(message: Message, state: FSMContext):
     await state.clear()
 
     # Уведомляем пользователя, что процесс запущен в фоне
+    offer_info = ""
+    if offer_name and offer_price:
+        offer_info = f"💰 Название оффера: {offer_name}\n💸 Цена оффера: {offer_price}\n"
+    else:
+        offer_info = "💰 Оффер: без изменений\n"
+
     await message.answer(
         f"📋 <b>Процесс перевода запущен!</b>\n\n"
         f"📁 ID лендинга: <code>{landing_id}</code>\n"
         f"🌍 Язык перевода: {target_language.title()}\n"
         f"🏳️ Страна локализации: {target_country.title()}\n"
+        f"{offer_info}"
         f"🔄 Обработка выполняется в фоновом режиме\n"
         f"⚡ Вы можете продолжить работу с ботом\n"
         f"📩 Результат будет отправлен по завершению",
@@ -819,7 +910,35 @@ async def process_country_choice(message: Message, state: FSMContext):
     )
 
     # Запускаем процесс перевода в фоновом режиме
-    asyncio.create_task(process_translation_in_background(landing_id, target_language, target_country, message, status_msg))
+    asyncio.create_task(process_translation_in_background(landing_id, target_language, target_country, message, status_msg, offer_name, offer_price))
+
+
+def parse_offer_input(user_input: str) -> tuple:
+    """
+    Простой парсер для извлечения названия оффера и цены.
+    Поддерживает основные разделители: | - ,
+
+    Возвращает: (offer_name, offer_price) или (None, None) если не удалось распарсить
+    """
+    user_input = user_input.strip()
+
+    if len(user_input) < 3:
+        return None, None
+
+    # Простые разделители в порядке приоритета
+    separators = [' | ', ' - ', ', ', ' за ']
+
+    for separator in separators:
+        if separator in user_input:
+            parts = user_input.split(separator, 1)
+            if len(parts) == 2:
+                offer_name = parts[0].strip()
+                offer_price = parts[1].strip()
+
+                if offer_name and offer_price:
+                    return offer_name, offer_price
+
+    return None, None
 
 
 def is_response_complete(response: str, original: str) -> bool:
