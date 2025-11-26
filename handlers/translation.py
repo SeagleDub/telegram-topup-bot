@@ -749,8 +749,8 @@ async def process_landing_id(message: Message, state: FSMContext):
     landing_id = message.text.strip()
 
     # Валидация ID лендинга
-    if not landing_id or len(landing_id) < 3:
-        await message.answer("❌ ID лендинга должен содержать минимум 3 символа.")
+    if not landing_id or not landing_id.isdigit():
+        await message.answer("❌ ID лендинга должен быть числом.")
         return
 
     # Сохраняем ID лендинга в состоянии
