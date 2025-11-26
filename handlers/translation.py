@@ -632,7 +632,7 @@ async def process_translation_in_background(landing_id: str, target_language: st
         # Формируем информацию об оффере для финального сообщения
         offer_caption = ""
         if offer_name and offer_price:
-            offer_caption = f"💰 Оффер: {offer_name} за {offer_price}\n"
+            offer_caption = f"💰 Оффер: {offer_name} - {offer_price}\n"
 
         await message.answer_document(
             translated_file,
@@ -827,12 +827,12 @@ async def process_country_choice(message: Message, state: FSMContext):
         f"📁 ID лендинга: {landing_id}\n"
         f"🌍 Язык перевода: {target_language}\n"
         f"🏳️ Страна: {target_country}\n\n"
-        f"Введите название и цену оффера для автоматической замены:\n\n"
+        f"Введите название и цену оффера в формате <b>Название - Цена</b>:\n\n"
         f"<b>Примеры:</b>\n"
-        f"• <code>Ябаран | 1990 рублей</code>\n"
-        f"• <code>Факми - $49.99</code>\n"
-        f"• <code>Флюгегехаймен, 39 евро</code>\n"
-        f"• <code>Заябок за 2990 руб</code>\n\n"
+        f"• <code>Urinotex - 0 грн</code>\n"
+        f"• <code>Urinotex - Безкоштовно</code>\n"
+        f"• <code>DIASPULA - 590 MXN</code>\n"
+        f"• <code>LUNEX - 29$</code>\n"
         f"Или введите <b>Ничего не меняй</b> чтобы пропустить этот шаг.",
         parse_mode="HTML"
     )
@@ -872,12 +872,13 @@ async def process_offer_details(message: Message, state: FSMContext):
 
         if not offer_name or not offer_price:
             await message.answer(
-                f"❌ <b>Не удалось найти название и цену</b>\n\n"
-                f"Попробуйте один из форматов:\n"
-                f"• <code>Ябаран | 1990 рублей</code>\n"
-                f"• <code>Факми - $49.99</code>\n"
-                f"• <code>Флюгегехаймен, 39 евро</code>\n"
-                f"• <code>Заябок за 2990 руб</code>\n\n"
+                f"❌ <b>Неправильный формат!</b>\n\n"
+                f"Используйте формат: <b>Название - Цена</b>\n\n"
+                f"<b>Правильные примеры:</b>\n"
+                f"• <code>Urinotex - 0 грн</code>\n"
+                f"• <code>Urinotex - Безкоштовно</code>\n"
+                f"• <code>DIASPULA - 590 MXN</code>\n"
+                f"• <code>LUNEX - 29$</code>\n"
                 f"Или введите <b>Ничего не меняй</b> чтобы пропустить этот шаг.",
                 parse_mode="HTML"
             )
@@ -892,7 +893,7 @@ async def process_offer_details(message: Message, state: FSMContext):
     # Уведомляем пользователя, что процесс запущен в фоне
     offer_info = ""
     if offer_name and offer_price:
-        offer_info = f"💰 Название оффера: {offer_name}\n💸 Цена оффера: {offer_price}\n"
+        offer_info = f"💰 Оффер: {offer_name} - {offer_price}\n"
     else:
         offer_info = "💰 Оффер: без изменений\n"
 
@@ -915,30 +916,38 @@ async def process_offer_details(message: Message, state: FSMContext):
 
 def parse_offer_input(user_input: str) -> tuple:
     """
-    Простой парсер для извлечения названия оффера и цены.
-    Поддерживает основные разделители: | - ,
+    Парсер для извлечения названия оффера и цены в формате "Название - Цена"
 
     Возвращает: (offer_name, offer_price) или (None, None) если не удалось распарсить
     """
     user_input = user_input.strip()
 
-    if len(user_input) < 3:
+    # Базовая валидация длины
+    if len(user_input) < 5:  # минимум "A - B"
         return None, None
 
-    # Простые разделители в порядке приоритета
-    separators = [' | ', ' - ', ', ', ' за ']
+    # Проверяем наличие основного разделителя " - "
+    if ' - ' not in user_input:
+        return None, None
 
-    for separator in separators:
-        if separator in user_input:
-            parts = user_input.split(separator, 1)
-            if len(parts) == 2:
-                offer_name = parts[0].strip()
-                offer_price = parts[1].strip()
+    # Разделяем по " - " только первое вхождение
+    parts = user_input.split(' - ', 1)
 
-                if offer_name and offer_price:
-                    return offer_name, offer_price
+    if len(parts) != 2:
+        return None, None
 
-    return None, None
+    offer_name = parts[0].strip()
+    offer_price = parts[1].strip()
+
+    # Валидация названия оффера
+    if not offer_name or len(offer_name) < 2:
+        return None, None
+
+    # Валидация цены
+    if not offer_price or len(offer_price) < 1:
+        return None, None
+
+    return offer_name, offer_price
 
 
 def is_response_complete(response: str, original: str) -> bool:
