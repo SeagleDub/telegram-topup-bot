@@ -1,5 +1,5 @@
 """
-Система перевода лендингов с Google Drive
+Система перевода лендингов
 """
 import os
 import io
@@ -38,7 +38,7 @@ SEM_LIMIT = 4   # сколько запросов одновременно ма�
 CHUNK_SIZE = 15000  # Увеличен размер для лучшего контекста
 
 def get_google_drive_service():
-    """Создает сервис для работы с Google Drive"""
+    """Создает сервис для работы с хранилищем лендингов"""
     # Используем те же credentials что и для Google Sheets
     SCOPES = [
         'https://www.googleapis.com/auth/spreadsheets',
@@ -54,7 +54,7 @@ def get_google_drive_service():
     return service
 
 def find_folder_by_name(service, folder_name: str, parent_folder_id: str) -> Optional[str]:
-    """Ищет папку по имени в указанной родительской папке"""
+    """Ищет лендинг по имени в указанном родительском каталоге"""
     query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and '{parent_folder_id}' in parents"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get('files', [])
@@ -64,7 +64,7 @@ def find_folder_by_name(service, folder_name: str, parent_folder_id: str) -> Opt
     return None
 
 def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
-    """Ищет файл site.zip в указанной папке"""
+    """Ищет файл site.zip для указанного лендинга"""
     query = f"name='site.zip' and '{folder_id}' in parents"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get('files', [])
@@ -74,7 +74,7 @@ def find_zip_in_folder(service, folder_id: str) -> Optional[Dict]:
     return None
 
 def download_file_from_drive(service, file_id: str) -> Optional[bytes]:
-    """Скачивает файл с Google Drive"""
+    """Скачивает файл лендинга"""
     try:
         request = service.files().get_media(fileId=file_id)
         file_content = request.execute()
@@ -520,30 +520,30 @@ async def process_translation_in_background(landing_id: str, target_language: st
         # Инициализируем Google Drive сервис
         drive_service = get_google_drive_service()
         if not drive_service:
-            await status_msg.edit_text("❌ Ошибка подключения к Google Drive. Попробуйте позже.")
+            await status_msg.edit_text("❌ Ошибка подключения к сервису. Попробуйте позже.")
             await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
             return
 
-        # Ищем папку с указанным ID
-        await status_msg.edit_text(f"🔄 Поиск папки '{landing_id}' на Google Drive...")
+        # Ищем лендинг с указанным ID
+        await status_msg.edit_text(f"🔄 Поиск лендинга '{landing_id}'...")
 
         folder_id = find_folder_by_name(drive_service, landing_id, GOOGLE_DRIVE_FOLDER_ID)
         if not folder_id:
             await status_msg.edit_text(
-                f"❌ Папка с ID '{landing_id}' не найдена на Google Drive.\n\n"
+                f"❌ Лендинг с ID '{landing_id}' не найден.\n\n"
                 "Проверьте правильность написания ID лендинга."
             )
             await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
             return
 
-        # Ищем ZIP архив в папке
-        await status_msg.edit_text("🔄 Поиск архива в папке...")
+        # Ищем ZIP архив лендинга
+        await status_msg.edit_text("🔄 Поиск архива лендинга...")
 
         zip_info = find_zip_in_folder(drive_service, folder_id)
         if not zip_info:
             await status_msg.edit_text(
-                f"❌ Файл 'site.zip' не найден в папке '{landing_id}'.\n\n"
-                "Убедитесь, что в папке есть файл с названием 'site.zip'."
+                f"❌ Файл 'site.zip' не найден для лендинга '{landing_id}'.\n\n"
+                "Убедитесь, что для лендинга есть файл с названием 'site.zip'."
             )
             await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
             return
@@ -561,7 +561,7 @@ async def process_translation_in_background(landing_id: str, target_language: st
         )
 
         if not zip_content:
-            await status_msg.edit_text("❌ Ошибка скачивания архива с Google Drive.")
+            await status_msg.edit_text("❌ Ошибка скачивания архива лендинга.")
             await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
             return
 
@@ -885,7 +885,7 @@ async def process_offer_details(message: Message, state: FSMContext):
             return
 
     # Отправляем сообщение о начале обработки
-    status_msg = await message.answer("🔄 Начинаю обработку лендинга...\n\n⏳ Поиск папки на Google Drive...")
+    status_msg = await message.answer("🔄 Начинаю обработку лендинга...\n\n⏳ Поиск лендинга...")
 
     # Очищаем состояние сразу, чтобы пользователь мог продолжать работать с ботом
     await state.clear()
