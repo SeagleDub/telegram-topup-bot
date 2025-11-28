@@ -8,6 +8,7 @@ from config import ADMIN_ID, TEAMLEADER_ID
 menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
+    [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -18,6 +19,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📢 Сделать рассылку")],
     [KeyboardButton(text="💰 Заказать пополнение")],
     [KeyboardButton(text="📂 Запросить расходники")],
+    [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
