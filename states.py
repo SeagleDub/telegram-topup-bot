@@ -39,3 +39,6 @@ class Form(StatesGroup):
     entering_landing_id = State()
     entering_offer_details = State()
 
+    # Получение расхода по байеру (для админов)
+    entering_buyer_id = State()
+
