@@ -7,7 +7,7 @@ from config import ADMIN_ID, TEAMLEADER_ID
 # Основные клавиатуры
 menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
-    [KeyboardButton(text="📂 Запросить расходники")],
+    # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
@@ -18,7 +18,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📢 Сделать рассылку")],
     [KeyboardButton(text="💰 Заказать пополнение")],
-    [KeyboardButton(text="📂 Запросить расходники")],
+    # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="📊 Получить расход по байеру")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
