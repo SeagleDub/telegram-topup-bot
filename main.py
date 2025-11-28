@@ -14,7 +14,8 @@ from handlers import (
     unicalization,
     pixel,
     broadcast,
-    translation
+    translation,
+    expenses
 )
 
 async def main():
