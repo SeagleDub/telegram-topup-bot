@@ -696,7 +696,7 @@ async def translate_landing_start(message: Message, state: FSMContext):
     m1 = await message.answer(
         "🌍 <b>Перевод лендинга</b>\n\n"
         "Введите ID лендинга:\n\n"
-        "Например: <code>123</code>\n\n"
+        "Например: <code>123</code>",
         parse_mode="HTML"
     )
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
