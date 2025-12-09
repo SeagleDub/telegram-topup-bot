@@ -170,6 +170,78 @@ async def process_image(bot: Bot, file_id: str, user_id: int, copies: int) -> Bu
     zip_filename = f"images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
 
+async def process_archive(bot: Bot, file_id: str, user_id: int) -> BufferedInputFile:
+    """Обрабатывает архив с изображениями - уникализирует каждое изображение (по 1 копии)"""
+    file = await bot.get_file(file_id)
+    file_content = await bot.download_file(file.file_path)
+
+    # Открываем входящий архив
+    input_zip = zipfile.ZipFile(BytesIO(file_content.getvalue()), 'r')
+
+    # Создаем выходной архив
+    output_zip_buffer = BytesIO()
+    output_zip = zipfile.ZipFile(output_zip_buffer, 'w', zipfile.ZIP_DEFLATED)
+
+    # Поддерживаемые форматы изображений
+    image_extensions = ('.jpg', '.jpeg', '.png', '.webp', '.tiff', '.bmp', '.gif')
+
+    try:
+        for file_info in input_zip.filelist:
+            file_name = file_info.filename
+
+            # Проверяем, является ли файл изображением
+            if file_name.lower().endswith(image_extensions):
+                try:
+                    # Читаем изображение из архива
+                    image_data = input_zip.read(file_name)
+                    image_buffer = BytesIO(image_data)
+
+                    # Уникализируем изображение
+                    img_processed, img_format = modify_image(image_buffer)
+
+                    # Генерируем новое имя файла
+                    name_parts = file_name.rsplit('.', 1)
+                    ext = name_parts[1] if len(name_parts) > 1 else 'jpg'
+                    unique_file_name = generate_random_filename(ext=ext)
+
+                    # Сохраняем уникализированное изображение
+                    output = BytesIO()
+                    save_params = {}
+
+                    if img_format.upper() in ('JPEG', 'JPG'):
+                        save_params['quality'] = random.randint(92, 98)
+                        save_params['optimize'] = True
+                    elif img_format.upper() == 'PNG':
+                        save_params['optimize'] = True
+                        save_params['compress_level'] = random.randint(6, 9)
+                    elif img_format.upper() == 'WEBP':
+                        save_params['quality'] = random.randint(92, 98)
+                        save_params['method'] = 6
+                    elif img_format.upper() == 'TIFF':
+                        save_params['compression'] = 'tiff_lzw'
+
+                    if img_format.upper() == 'JPEG' and hasattr(img_processed, '_exif'):
+                        img_processed.save(output, format=img_format, exif=img_processed._exif, **save_params)
+                    elif img_format.upper() == 'PNG' and hasattr(img_processed, '_png_info'):
+                        img_processed.save(output, format=img_format, pnginfo=img_processed._png_info, **save_params)
+                    else:
+                        img_processed.save(output, format=img_format, **save_params)
+
+                    output.seek(0)
+                    output_zip.writestr(unique_file_name, output.read())
+
+                except Exception as e:
+                    # Если не удалось обработать изображение, пропускаем его
+                    bugsnag.notify(e)
+                    continue
+    finally:
+        input_zip.close()
+        output_zip.close()
+
+    output_zip_buffer.seek(0)
+    zip_filename = f"unicalized_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return BufferedInputFile(output_zip_buffer.read(), filename=zip_filename)
+
 @router.message(F.text == "🖼️ Уникализатор")
 async def images_unicalization_initiation(message: Message, state: FSMContext):
     """Начинает процесс уникализации изображений"""
@@ -177,28 +249,47 @@ async def images_unicalization_initiation(message: Message, state: FSMContext):
         await message.answer("❌ У вас нет доступа к этой функции.")
         return
 
-    m1 = await message.answer("Загрузите изображение для уникализации:")
+    m1 = await message.answer("Загрузите изображение для уникализации или ZIP архив с несколькими изображениями:")
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.images_unicalization)
 
 @router.message(Form.images_unicalization)
 async def receive_image(message: Message, state: FSMContext):
-    """Обрабатывает полученное изображение"""
+    """Обрабатывает полученное изображение или архив"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
         return
 
+    # Проверка на архив
+    if message.document and message.document.mime_type in ('application/zip', 'application/x-zip-compressed'):
+        file_id = message.document.file_id
+        await state.update_data(unicalization_file_id=file_id, is_archive=True)
+
+        await message.answer("🔄 Обрабатываю архив с изображениями...", reply_markup=cancel_kb)
+        try:
+            images_zip = await process_archive(message.bot, file_id, message.chat.id)
+            await message.bot.send_document(message.chat.id, document=images_zip)
+            await message.answer("✅ Все изображения из архива уникализированы.", reply_markup=get_menu_keyboard(message.chat.id))
+        except Exception as e:
+            bugsnag.notify(e)
+            await message.answer("❌ Произошла ошибка при обработке архива.")
+
+        await state.clear()
+        return
+
+    # Проверка на изображение
     if message.photo or (message.document and message.document.mime_type.startswith('image/')):
         file_id = (
             message.photo[-1].file_id if message.photo
             else message.document.file_id
         )
     else:
-        await message.answer("❌ Пожалуйста, отправьте изображение (фото или документ).", reply_markup=cancel_kb)
+        await message.answer("❌ Пожалуйста, отправьте изображение (фото или документ) или ZIP архив с изображениями.", reply_markup=cancel_kb)
         return
-    await state.update_data(unicalization_file_id=file_id)
+
+    await state.update_data(unicalization_file_id=file_id, is_archive=False)
 
     await message.answer("Введите количество уникализированных копий (например, 5):", reply_markup=cancel_kb)
     await state.set_state(Form.unicalization_copies)
