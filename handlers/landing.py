@@ -99,14 +99,18 @@ async def write_specification(message: Message, state: FSMContext):
     spec_image_ids = data.get("spec_image_ids", [])
     spec_doc_ids = data.get("spec_doc_ids", [])
 
-    if message.text:
-        spec_text += ("\n" if spec_text else "") + message.text.strip()
+    # Обрабатываем текст (как обычное сообщение, так и подпись к медиа)
+    text_content = message.text or message.caption
+    if text_content:
+        spec_text += ("\n" if spec_text else "") + text_content.strip()
 
+    # Обрабатываем фото
     if message.photo:
         largest_photo = message.photo[-1]
         spec_image_ids.append(largest_photo.file_id)
 
-    elif message.document:
+    # Обрабатываем документы
+    if message.document:
         spec_doc_ids.append(message.document.file_id)
 
     await state.update_data(
