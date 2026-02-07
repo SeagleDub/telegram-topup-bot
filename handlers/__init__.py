@@ -11,6 +11,8 @@ from handlers import unicalization
 from handlers import pixel
 from handlers import broadcast
 from handlers import translation
+from handlers import expenses
+from handlers import google_sms
 
 # Список всех роутеров для удобного импорта
 __all__ = [
@@ -21,6 +23,8 @@ __all__ = [
     'unicalization',
     'pixel',
     'broadcast',
-    'translation'
+    'translation',
+    'expenses',
+    'google_sms'
 ]
 

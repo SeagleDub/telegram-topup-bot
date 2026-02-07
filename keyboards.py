@@ -95,3 +95,10 @@ def get_admin_processing_keyboard(user_id: int):
         [InlineKeyboardButton(text="✅ Взять в работу", callback_data=f"processing:{user_id}")],
         [InlineKeyboardButton(text="❌ Отклонено", callback_data=f"decline:{user_id}")]
     ])
+
+def get_google_sms_keyboard():
+    """Клавиатура для получения SMS кода Google Ads"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Получить код Google Ads", callback_data="get_google_sms")]
+    ])
+

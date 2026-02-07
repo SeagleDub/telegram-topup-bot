@@ -42,3 +42,7 @@ class Form(StatesGroup):
     # Получение расхода по байеру (для админов)
     entering_buyer_id = State()
 
+    # Получение SMS для Google Ads
+    waiting_for_phone_query = State()
+    waiting_for_sms_request = State()
+
