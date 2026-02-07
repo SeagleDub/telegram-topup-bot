@@ -44,5 +44,6 @@ class Form(StatesGroup):
 
     # Получение SMS для Google Ads
     waiting_for_phone_query = State()
+    waiting_for_sms_count = State()
     waiting_for_sms_request = State()
 

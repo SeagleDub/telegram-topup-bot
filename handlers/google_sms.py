@@ -129,7 +129,7 @@ async def process_phone_query(message: Message, state: FSMContext):
         custom_name=number_data.get("custom_name", "")
     )
 
-    # Показываем информацию о номере и кнопку получения кода
+    # Показываем информацию о номере и просим ввести количество SMS
     custom_name_text = f"\n📝 Название: <b>{number_data.get('custom_name', '-')}</b>" if number_data.get("custom_name") else ""
 
     m1 = await message.answer(
@@ -137,6 +137,47 @@ async def process_phone_query(message: Message, state: FSMContext):
         f"📞 Номер: <b>{number_data['phone_number']}</b>{custom_name_text}\n"
         f"🌍 Страна: <b>{number_data.get('country_code', '-')}</b>\n"
         f"📊 Статус: <b>{number_data.get('status', '-')}</b>\n\n"
+        f"Введите сколько последних SMS показать (от 1 до 10):",
+        parse_mode="HTML",
+        reply_markup=cancel_kb
+    )
+    last_messages[message.from_user.id] = [m1.message_id]
+    await state.set_state(Form.waiting_for_sms_count)
+
+
+@router.message(Form.waiting_for_sms_count)
+async def process_sms_count(message: Message, state: FSMContext):
+    """Обрабатывает ввод количества SMS"""
+    if message.text == "❌ Отмена":
+        await delete_last_messages(message.from_user.id, message.bot)
+        await state.clear()
+        await message.answer(
+            "Действие отменено. Возвращаю в главное меню ⬅️",
+            reply_markup=get_menu_keyboard(message.from_user.id)
+        )
+        return
+
+    # Проверяем что введено число от 1 до 10
+    try:
+        sms_count = int(message.text.strip())
+        if sms_count < 1 or sms_count > 10:
+            raise ValueError()
+    except ValueError:
+        await message.answer(
+            "❌ Пожалуйста, введите число от 1 до 10.",
+            reply_markup=cancel_kb
+        )
+        return
+
+    await delete_last_messages(message.from_user.id, message.bot)
+    await state.update_data(sms_count=sms_count)
+
+    data = await state.get_data()
+    phone_number = data.get("phone_number")
+
+    m1 = await message.answer(
+        f"📱 <b>Номер: {phone_number}</b>\n"
+        f"📊 Показывать: <b>{sms_count}</b> последних SMS\n\n"
         f"Нажмите кнопку ниже, чтобы получить SMS код:",
         parse_mode="HTML",
         reply_markup=get_google_sms_keyboard()
@@ -152,6 +193,7 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     number_id = data.get("number_id")
     phone_number = data.get("phone_number")
+    sms_count = data.get("sms_count", 5)
 
     if not number_id:
         await query.answer("❌ Ошибка: номер не найден", show_alert=True)
@@ -186,10 +228,10 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
         )
         return
 
-    # Формируем ответ с SMS сообщениями (последние 5)
+    # Формируем ответ с SMS сообщениями (количество выбирает пользователь)
     response_text = f"📬 <b>SMS для номера {phone_number}:</b>\n\n"
 
-    for i, sms in enumerate(messages[:5], 1):
+    for i, sms in enumerate(messages[:sms_count], 1):
         verification_code = sms.get("verification_code")
         from_number = sms.get("from_number", "Неизвестно")
         received_at = sms.get("received_at", "")
@@ -213,20 +255,18 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
         if verification_code:
             response_text += f"🔑 <b>КОД: {verification_code}</b>\n"
 
-        # Ограничиваем длину сообщения
-        if len(message_body) > 200:
-            message_body = message_body[:200] + "..."
         response_text += f"💬 Текст: {message_body}\n\n"
 
     total_sms = sms_result.get("data", {}).get("pagination", {}).get("total", len(messages))
-    if total_sms > 5:
-        response_text += f"<i>Показаны последние 5 из {total_sms} сообщений</i>"
+    if total_sms > sms_count:
+        response_text += f"<i>Показаны последние {min(sms_count, len(messages))} из {total_sms} сообщений</i>"
 
     await query.message.answer(
         response_text,
         parse_mode="HTML",
         reply_markup=get_google_sms_keyboard()
     )
+
 
 
 @router.message(Form.waiting_for_sms_request)

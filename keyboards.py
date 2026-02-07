@@ -9,6 +9,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
+    [KeyboardButton(text="📱 Получить SMS Google Ads")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -21,6 +22,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="📊 Получить расход по байеру")],
+    [KeyboardButton(text="📱 Получить SMS Google Ads")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -101,4 +103,5 @@ def get_google_sms_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Получить код Google Ads", callback_data="get_google_sms")]
     ])
+
 
