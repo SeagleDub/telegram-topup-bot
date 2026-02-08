@@ -134,8 +134,6 @@ async def process_quantity(message: Message, state: FSMContext):
     purchased_numbers = []
     errors = []
     total_cost = 0
-    last_purchased_count = 0
-    last_errors_count = 0
 
     for i in range(quantity):
         try:
@@ -143,9 +141,6 @@ async def process_quantity(message: Message, state: FSMContext):
             custom_name = generate_custom_name()
 
             result = await purchase_single_number(LUBOYDOMEN_API_TOKEN, custom_name)
-
-            # DEBUG: отправляем ответ API в чат
-            await message.answer(f"🔍 DEBUG API Response #{i+1}:\n<code>{result}</code>", parse_mode="HTML")
 
             if result.get("success"):
                 numbers = result.get("numbers", [])
@@ -155,23 +150,17 @@ async def process_quantity(message: Message, state: FSMContext):
                 error_msg = result.get("error") or result.get("detail") or "Неизвестная ошибка"
                 errors.append(f"Номер {i+1}: {error_msg}")
 
-            # Обновляем прогресс только если что-то изменилось
-            if len(purchased_numbers) != last_purchased_count or len(errors) != last_errors_count:
-                last_purchased_count = len(purchased_numbers)
-                last_errors_count = len(errors)
-                try:
-                    await progress_msg.edit_text(
-                        f"🔄 <b>Покупка номеров...</b>\n\n"
-                        f"🌍 Страна: <b>{COUNTRY_CODE}</b>\n"
-                        f"📊 Количество: <b>{quantity}</b>\n"
-                        f"📅 Срок аренды: <b>{DURATION_MONTHS} мес.</b>\n\n"
-                        f"Куплено: <b>{len(purchased_numbers)}/{quantity}</b>\n"
-                        f"Ошибок: <b>{len(errors)}</b>\n"
-                        f"<i>Пожалуйста, подождите...</i>",
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
+            # Обновляем прогресс
+            await progress_msg.edit_text(
+                f"🔄 <b>Покупка номеров...</b>\n\n"
+                f"🌍 Страна: <b>{COUNTRY_CODE}</b>\n"
+                f"📊 Количество: <b>{quantity}</b>\n"
+                f"📅 Срок аренды: <b>{DURATION_MONTHS} мес.</b>\n\n"
+                f"Куплено: <b>{len(purchased_numbers)}/{quantity}</b>\n"
+                f"Ошибок: <b>{len(errors)}</b>\n"
+                f"<i>Пожалуйста, подождите...</i>",
+                parse_mode="HTML"
+            )
 
             # Задержка между запросами (кроме последнего)
             if i < quantity - 1:
