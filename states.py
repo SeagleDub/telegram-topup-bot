@@ -47,3 +47,6 @@ class Form(StatesGroup):
     waiting_for_sms_count = State()
     waiting_for_sms_request = State()
 
+    # Покупка номеров (для админов)
+    entering_numbers_quantity = State()
+

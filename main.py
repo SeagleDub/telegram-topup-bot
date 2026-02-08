@@ -16,7 +16,8 @@ from handlers import (
     broadcast,
     translation,
     expenses,
-    google_sms
+    google_sms,
+    purchase_numbers
 )
 
 async def main():
@@ -37,6 +38,7 @@ async def main():
     dp.include_router(translation.router)
     dp.include_router(expenses.router)
     dp.include_router(google_sms.router)
+    dp.include_router(purchase_numbers.router)
 
     # Удаляем вебхук и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)
