@@ -57,17 +57,7 @@ async def purchase_single_number(api_token: str, custom_name: str) -> dict:
             headers=headers,
             json=payload
         ) as response:
-            result = await response.json()
-            print(f"API Response status: {response.status}, body: {result}")  # Логирование
-
-            # Если HTTP статус не 200/201, добавляем информацию об ошибке
-            if response.status not in (200, 201):
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status}: {result.get('detail') or result.get('error') or result}"
-                }
-
-            return result
+            return await response.json()
 
 
 @router.message(F.text == "📞 Купить номера")
