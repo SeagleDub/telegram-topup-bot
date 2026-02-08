@@ -53,7 +53,7 @@ async def purchase_single_number(api_token: str, custom_name: str) -> dict:
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            f"{LUBOYDOMEN_API_BASE}/numbers",
+            f"{LUBOYDOMEN_API_BASE}/numbers/purchase/",
             headers=headers,
             json=payload
         ) as response:
