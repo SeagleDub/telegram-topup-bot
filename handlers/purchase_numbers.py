@@ -113,15 +113,6 @@ async def process_quantity(message: Message, state: FSMContext):
         )
         return
 
-    # Проверяем токен API
-    if not LUBOYDOMEN_API_TOKEN:
-        await message.answer(
-            "❌ Ошибка: LUBOYDOMEN_API_TOKEN не настроен в .env файле",
-            reply_markup=get_menu_keyboard(message.from_user.id)
-        )
-        await state.clear()
-        return
-
     await delete_last_messages(message.from_user.id, message.bot)
 
     # Примерное время на покупку (с учетом rate limit)
@@ -154,7 +145,7 @@ async def process_quantity(message: Message, state: FSMContext):
             result = await purchase_single_number(LUBOYDOMEN_API_TOKEN, custom_name)
 
             # DEBUG: отправляем ответ API в чат
-            await message.answer(f"🔍 DEBUG #{i+1}:\n<code>{result}</code>", parse_mode="HTML")
+            await message.answer(f"🔍 DEBUG API Response #{i+1}:\n<code>{result}</code>", parse_mode="HTML")
 
             if result.get("success"):
                 numbers = result.get("numbers", [])
@@ -187,10 +178,7 @@ async def process_quantity(message: Message, state: FSMContext):
                 await asyncio.sleep(API_REQUEST_DELAY)
 
         except Exception as e:
-            error_detail = f"Номер {i+1}: {type(e).__name__}: {str(e)}"
-            errors.append(error_detail)
-            # DEBUG: отправляем ошибку в чат
-            await message.answer(f"🔍 DEBUG ERROR #{i+1}:\n<code>{error_detail}</code>", parse_mode="HTML")
+            errors.append(f"Номер {i+1}: {str(e)}")
             # При ошибке тоже делаем задержку
             if i < quantity - 1:
                 await asyncio.sleep(API_REQUEST_DELAY)
