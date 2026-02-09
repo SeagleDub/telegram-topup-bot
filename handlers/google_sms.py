@@ -1,7 +1,7 @@
 """
 Обработчики для получения SMS кодов Google Ads
 """
-import aiohttp
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -9,40 +9,14 @@ from aiogram.fsm.context import FSMContext
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard, get_google_sms_keyboard
 from utils import last_messages, delete_last_messages
-from config import LUBOYDOMEN_API_TOKEN
+from services.luboydomen import get_all_phone_numbers, get_sms_messages
 
 router = Router()
 
-LUBOYDOMEN_API_BASE = "https://luboydomen.info/api/ggl"
 
-
-async def get_phone_numbers(api_token: str) -> dict:
-    """Получает список номеров телефонов из API"""
-    headers = {"Authorization": f"Token {api_token}"}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"{LUBOYDOMEN_API_BASE}/numbers",
-            headers=headers
-        ) as response:
-            return await response.json()
-
-
-async def get_sms_messages(api_token: str, number_id: str) -> dict:
-    """Получает SMS сообщения для номера"""
-    headers = {"Authorization": f"Token {api_token}"}
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"{LUBOYDOMEN_API_BASE}/numbers/{number_id}/sms",
-            headers=headers
-        ) as response:
-            return await response.json()
-
-
-async def find_number_by_query(api_token: str, query: str) -> dict | None:
+async def find_number_by_query(query: str) -> dict | None:
     """Ищет номер по номеру телефона или custom_name"""
-    result = await get_phone_numbers(api_token)
+    result = await get_all_phone_numbers()
 
     if not result.get("success") or not result.get("data", {}).get("numbers"):
         return None
@@ -102,7 +76,7 @@ async def process_phone_query(message: Message, state: FSMContext):
     last_messages[message.from_user.id] = [m1.message_id]
 
     try:
-        number_data = await find_number_by_query(LUBOYDOMEN_API_TOKEN, query)
+        number_data = await find_number_by_query(query)
     except Exception as e:
         await message.answer(
             f"❌ Ошибка при поиске номера: {str(e)}",
@@ -202,7 +176,7 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
     await query.answer("🔄 Получаю SMS...")
 
     try:
-        sms_result = await get_sms_messages(LUBOYDOMEN_API_TOKEN, number_id)
+        sms_result = await get_sms_messages(number_id)
     except Exception as e:
         await query.message.answer(
             f"❌ Ошибка при получении SMS: {str(e)}",
@@ -240,7 +214,6 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
         # Форматируем время
         if received_at:
             try:
-                from datetime import datetime
                 dt = datetime.fromisoformat(received_at.replace("+00:00", "+00:00"))
                 time_str = dt.strftime("%d.%m.%Y %H:%M:%S")
             except:
@@ -268,7 +241,6 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
     )
 
 
-
 @router.message(Form.waiting_for_sms_request)
 async def handle_sms_request_text(message: Message, state: FSMContext):
     """Обрабатывает текстовые сообщения в состоянии ожидания SMS"""
@@ -279,4 +251,3 @@ async def handle_sms_request_text(message: Message, state: FSMContext):
             "Действие отменено. Возвращаю в главное меню ⬅️",
             reply_markup=get_menu_keyboard(message.from_user.id)
         )
-
