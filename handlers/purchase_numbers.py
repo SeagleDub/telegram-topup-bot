@@ -183,34 +183,16 @@ async def process_quantity(message: Message, state: FSMContext):
 
         await message.answer(response_text, parse_mode="HTML")
 
-        # Формируем список номеров
-        numbers_text = f"<b>━━━ Купленные номера ━━━</b>\n\n"
-
-        for i, number in enumerate(purchased_numbers, 1):
+        # Формируем простой список номеров (каждый номер с новой строки)
+        numbers_text = ""
+        for number in purchased_numbers:
             phone = number.get("phone_number", "N/A")
-            piv_id = number.get("piv_num_id", "N/A")
-            expires = number.get("expires_at", "N/A")
-            num_custom_name = number.get("custom_name", "-")
-
-            if expires and expires != "N/A":
-                try:
-                    dt = datetime.fromisoformat(expires.replace("+00:00", "+00:00"))
-                    expires = dt.strftime("%d.%m.%Y")
-                except:
-                    pass
-
-            numbers_text += f"<b>#{i}</b>\n"
-            numbers_text += f"📞 Номер: <code>{phone}</code>\n"
-            numbers_text += f"🆔 ID: <code>{piv_id}</code>\n"
-            numbers_text += f"📅 Истекает: {expires}\n"
-            if num_custom_name and num_custom_name != "-":
-                numbers_text += f"📝 Название: {num_custom_name}\n"
-            numbers_text += "\n"
+            numbers_text += f"{phone}\n"
 
         # Разбиваем на части и отправляем
-        parts = split_message(numbers_text)
+        parts = split_message(numbers_text.strip())
         for part in parts:
-            await message.answer(part, parse_mode="HTML")
+            await message.answer(part)
 
         if errors:
             errors_text = f"<b>⚠️ Ошибки ({len(errors)}):</b>\n"
