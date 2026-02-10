@@ -1,5 +1,5 @@
 """
-Обработчики для покупки номеров телефонов (только для админов/тимлидеров)
+Обработчики для покупки номеров телефонов
 """
 import asyncio
 from datetime import datetime
@@ -10,7 +10,6 @@ from aiogram.fsm.context import FSMContext
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
 from utils import last_messages, delete_last_messages
-from config import ADMIN_ID, TEAMLEADER_ID
 from services.luboydomen import get_all_phone_numbers, purchase_number
 
 router = Router()
@@ -25,11 +24,6 @@ MAX_MESSAGE_LENGTH = 4000
 COUNTRY_CODE = "GB"
 DURATION_MONTHS = 1
 AUTO_RENEW = False
-
-
-def is_admin_or_teamleader(user_id: int) -> bool:
-    """Проверяет, является ли пользователь админом или тимлидером"""
-    return user_id == ADMIN_ID or user_id == TEAMLEADER_ID
 
 
 def generate_custom_name() -> str:
@@ -63,12 +57,6 @@ def split_message(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list:
 @router.message(F.text == "📞 Купить номера")
 async def start_purchase_numbers(message: Message, state: FSMContext):
     """Начинает процесс покупки номеров"""
-    if not is_admin_or_teamleader(message.from_user.id):
-        await message.answer(
-            "❌ У вас нет доступа к этой функции.",
-            reply_markup=get_menu_keyboard(message.from_user.id)
-        )
-        return
 
     m1 = await message.answer(
         "📞 <b>Покупка номеров телефонов (GB)</b>\n\n"
@@ -222,12 +210,6 @@ async def process_quantity(message: Message, state: FSMContext):
 @router.message(F.text == "📋 Список номеров")
 async def show_numbers_list(message: Message, state: FSMContext):
     """Показывает список всех номеров"""
-    if not is_admin_or_teamleader(message.from_user.id):
-        await message.answer(
-            "❌ У вас нет доступа к этой функции.",
-            reply_markup=get_menu_keyboard(message.from_user.id)
-        )
-        return
 
     progress_msg = await message.answer("🔄 Загружаю список номеров...")
 

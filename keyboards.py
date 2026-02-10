@@ -10,6 +10,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="📱 Получить SMS Google Ads")],
+    [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
