@@ -232,8 +232,13 @@ async def show_numbers_list(message: Message, state: FSMContext):
         pass
 
     if not result.get("success"):
+        # Покажем причину, если она есть, но ограничим длину сообщения
+        raw_reason = result.get("error") or result.get("detail") or result.get("message") or str(result)
+        reason = str(raw_reason)
+        if len(reason) > 800:
+            reason = reason[:800] + "..."
         await message.answer(
-            "❌ Не удалось получить список номеров.",
+            f"❌ Не удалось получить список номеров. Причина: {reason}",
             reply_markup=get_menu_keyboard(message.from_user.id)
         )
         return

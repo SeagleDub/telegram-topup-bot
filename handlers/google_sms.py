@@ -15,17 +15,26 @@ router = Router()
 
 
 async def find_number_by_query(query: str) -> dict | None:
-    """Ищет номер по номеру телефона или custom_name"""
+    """Ищет номер по номеру телефона или custom_name
+
+    При ошибке API выбрасывает RuntimeError с текстом причины (чтобы бот мог показать пользователю).
+    """
     result = await get_all_phone_numbers()
 
-    if not result.get("success") or not result.get("data", {}).get("numbers"):
+    # Если API вернул неуспешный результат — пробрасываем причину вверх
+    if not result.get("success"):
+        reason = result.get("error") or result.get("detail") or result.get("message") or str(result)
+        raise RuntimeError(f"Ошибка получения списка номеров: {reason}")
+
+    numbers = result.get("data", {}).get("numbers", [])
+    if not numbers:
         return None
 
     query_lower = query.lower().strip()
     # Удаляем пробелы и дефисы для сравнения номеров
     query_clean = query_lower.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
 
-    for number in result["data"]["numbers"]:
+    for number in numbers:
         phone = number.get("phone_number", "").replace(" ", "").replace("-", "")
         custom_name = number.get("custom_name", "").lower()
 
