@@ -13,6 +13,7 @@ from handlers import broadcast
 from handlers import translation
 from handlers import expenses
 from handlers import google_sms
+from handlers import auto_renewal
 
 # Список всех роутеров для удобного импорта
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     'broadcast',
     'translation',
     'expenses',
-    'google_sms'
+    'google_sms',
+    'auto_renewal'
 ]
 

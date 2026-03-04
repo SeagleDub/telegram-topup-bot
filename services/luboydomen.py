@@ -243,6 +243,26 @@ async def purchase_number(custom_name: str, country_code: str = "GB", duration_m
         return result
 
 
+async def toggle_auto_renewal(number_id: str, auto_renew: bool) -> dict:
+    """Включает или выключает автопродление для номера"""
+    headers = {
+        "Authorization": f"Token {LUBOYDOMEN_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {"auto_renew": auto_renew}
+
+    async with aiohttp.ClientSession() as session:
+        result = await _fetch_json_with_rate_handling(
+            session,
+            "POST",
+            f"{LUBOYDOMEN_API_BASE}/numbers/{number_id}/auto-renewal/",
+            headers=headers,
+            json_body=payload
+        )
+        return result
+
+
 async def get_sms_messages(number_id: str, limit: int = 100, offset: int = 0) -> dict:
     """Получает список SMS для номера по его ID"""
     headers = {"Authorization": f"Token {LUBOYDOMEN_API_TOKEN}"}

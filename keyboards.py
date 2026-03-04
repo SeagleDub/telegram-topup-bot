@@ -25,6 +25,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📊 Получить расход по байеру")],
     [KeyboardButton(text="📱 Получить SMS Google Ads")],
     [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
+    [KeyboardButton(text="🔄 Автопродление номеров")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],

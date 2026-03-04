@@ -50,3 +50,8 @@ class Form(StatesGroup):
     # Покупка номеров (для админов)
     entering_numbers_quantity = State()
 
+    # Автопродление номеров (для админов)
+    choosing_auto_renewal_action = State()
+    selecting_auto_renewal_numbers = State()
+    confirming_auto_renewal = State()
+
