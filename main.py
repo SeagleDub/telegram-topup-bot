@@ -2,8 +2,15 @@
 Главный файл телеграм бота для пополнения и управления расходниками
 """
 import asyncio
+import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 from config import API_TOKEN
 from handlers import (

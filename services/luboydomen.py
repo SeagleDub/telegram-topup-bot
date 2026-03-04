@@ -245,6 +245,9 @@ async def purchase_number(custom_name: str, country_code: str = "GB", duration_m
 
 async def toggle_auto_renewal(number_id: str, auto_renew: bool) -> dict:
     """Включает или выключает автопродление для номера"""
+    import logging
+    logger = logging.getLogger(__name__)
+
     headers = {
         "Authorization": f"Token {LUBOYDOMEN_API_TOKEN}",
         "Content-Type": "application/json"
@@ -252,14 +255,19 @@ async def toggle_auto_renewal(number_id: str, auto_renew: bool) -> dict:
 
     payload = {"auto_renew": auto_renew}
 
+    logger.info(f"[toggle_auto_renewal] number_id={number_id}, auto_renew={auto_renew}, "
+                f"url={LUBOYDOMEN_API_BASE}/numbers/{number_id}/auto-renewal/, method=PATCH")
+
     async with aiohttp.ClientSession() as session:
         result = await _fetch_json_with_rate_handling(
             session,
-            "POST",
+            "PATCH",
             f"{LUBOYDOMEN_API_BASE}/numbers/{number_id}/auto-renewal/",
             headers=headers,
             json_body=payload
         )
+
+        logger.info(f"[toggle_auto_renewal] number_id={number_id}, response={result}")
         return result
 
 

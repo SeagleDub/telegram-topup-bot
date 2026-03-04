@@ -2,6 +2,7 @@
 Обработчики для включения/выключения автопродления номеров (только для админа и тимлидера)
 """
 import asyncio
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -13,6 +14,7 @@ from config import ADMIN_ID, TEAMLEADER_ID
 from services.luboydomen import get_all_phone_numbers, toggle_auto_renewal
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 # Задержка между API запросами для избежания rate limit (в секундах)
 API_REQUEST_DELAY = 6
@@ -332,15 +334,35 @@ async def execute_auto_renewal(query: CallbackQuery, state: FSMContext):
     for i, number in enumerate(selected_numbers):
         try:
             result = await toggle_auto_renewal(number["piv_num_id"], auto_renew)
+            logger.info(f"[auto_renewal] number={number['phone_number']} "
+                        f"piv_num_id={number['piv_num_id']} "
+                        f"auto_renew={auto_renew} result={result}")
 
-            # API возвращает HTTP 200 при успехе
+            # Проверяем ошибки
             if result.get("error") or result.get("success") is False:
-                error_msg = result.get("error") or result.get("detail") or "Неизвестная ошибка"
+                error_msg = result.get("error") or result.get("detail") or result.get("details") or str(result)
                 error_list.append(f"{number['phone_number']}: {error_msg}")
+                logger.warning(f"[auto_renewal] FAILED for {number['phone_number']}: {result}")
+            elif result.get("success") is True:
+                # Дополнительно проверяем, что auto_renew реально изменился в ответе
+                response_data = result.get("data", {})
+                actual_auto_renew = response_data.get("auto_renew")
+                if actual_auto_renew is not None and actual_auto_renew != auto_renew:
+                    error_list.append(
+                        f"{number['phone_number']}: API вернул success, но auto_renew={actual_auto_renew} "
+                        f"(ожидали {auto_renew})"
+                    )
+                    logger.warning(f"[auto_renewal] MISMATCH for {number['phone_number']}: "
+                                   f"expected auto_renew={auto_renew}, got {actual_auto_renew}")
+                else:
+                    success_list.append(number)
             else:
-                success_list.append(number)
+                # Неизвестный формат ответа
+                error_list.append(f"{number['phone_number']}: Неожиданный ответ: {str(result)[:200]}")
+                logger.warning(f"[auto_renewal] UNEXPECTED RESPONSE for {number['phone_number']}: {result}")
         except Exception as e:
             error_list.append(f"{number['phone_number']}: {str(e)}")
+            logger.exception(f"[auto_renewal] EXCEPTION for {number['phone_number']}")
 
         # Обновляем прогресс
         try:
