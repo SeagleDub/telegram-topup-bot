@@ -108,3 +108,12 @@ def get_google_sms_keyboard():
     ])
 
 
+def get_purchase_country_keyboard():
+    """Клавиатура выбора страны для покупки номеров"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇬🇧 GB", callback_data="purchase_country:GB")],
+        [InlineKeyboardButton(text="🇺🇸 US", callback_data="purchase_country:US")],
+        [InlineKeyboardButton(text="🇨🇦 CA", callback_data="purchase_country:CA")]
+    ])
+
+

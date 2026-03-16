@@ -4,11 +4,11 @@
 import asyncio
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from states import Form
-from keyboards import cancel_kb, get_menu_keyboard
+from keyboards import cancel_kb, get_menu_keyboard, get_purchase_country_keyboard
 from utils import last_messages, delete_last_messages
 from services.luboydomen import get_all_phone_numbers, purchase_number
 
@@ -20,8 +20,14 @@ API_REQUEST_DELAY = 6  # 10 запросов в минуту = 1 запрос к
 # Максимальная длина сообщения в Telegram
 MAX_MESSAGE_LENGTH = 4000
 
+# Доступные страны для покупки
+COUNTRY_LABELS = {
+    "GB": "🇬🇧 GB",
+    "US": "🇺🇸 US",
+    "CA": "🇨🇦 CA"
+}
+
 # Фиксированные параметры
-COUNTRY_CODE = "GB"
 DURATION_MONTHS = 1
 AUTO_RENEW = False
 
@@ -59,12 +65,48 @@ async def start_purchase_numbers(message: Message, state: FSMContext):
     """Начинает процесс покупки номеров"""
 
     m1 = await message.answer(
-        "📞 <b>Покупка номеров телефонов (GB)</b>\n\n"
+        "📞 <b>Покупка номеров телефонов</b>\n\n"
+        "Выберите страну для покупки:",
+        parse_mode="HTML",
+        reply_markup=get_purchase_country_keyboard()
+    )
+    m2 = await message.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.choosing_purchase_country)
+
+
+@router.message(Form.choosing_purchase_country, F.text == "❌ Отмена")
+async def cancel_purchase_country(message: Message, state: FSMContext):
+    """Отменяет выбор страны для покупки номеров"""
+    await delete_last_messages(message.from_user.id, message.bot)
+    await state.clear()
+    await message.answer(
+        "Действие отменено. Возвращаю в главное меню ⬅️",
+        reply_markup=get_menu_keyboard(message.from_user.id)
+    )
+
+
+@router.callback_query(F.data.startswith("purchase_country:"), Form.choosing_purchase_country)
+async def process_purchase_country(query: CallbackQuery, state: FSMContext):
+    """Обрабатывает выбор страны для покупки номеров"""
+    country_code = query.data.split(":", 1)[1]
+    if country_code not in COUNTRY_LABELS:
+        await query.answer("❌ Неизвестная страна", show_alert=True)
+        return
+
+    await state.update_data(country_code=country_code)
+    await query.answer()
+
+    await delete_last_messages(query.from_user.id, query.message.bot)
+
+    country_label = COUNTRY_LABELS[country_code]
+    m1 = await query.message.answer(
+        f"📞 <b>Покупка номеров телефонов ({country_label})</b>\n\n"
         "Введите количество номеров, которые хотите купить:",
         parse_mode="HTML",
         reply_markup=cancel_kb
     )
-    last_messages[message.from_user.id] = [m1.message_id]
+    last_messages[query.from_user.id] = [m1.message_id]
     await state.set_state(Form.entering_numbers_quantity)
 
 
@@ -93,13 +135,25 @@ async def process_quantity(message: Message, state: FSMContext):
 
     await delete_last_messages(message.from_user.id, message.bot)
 
+    data = await state.get_data()
+    country_code = data.get("country_code")
+    if country_code not in COUNTRY_LABELS:
+        await state.clear()
+        await message.answer(
+            "❌ Страна для покупки не выбрана. Начните покупку заново.",
+            reply_markup=get_menu_keyboard(message.from_user.id)
+        )
+        return
+
+    country_label = COUNTRY_LABELS[country_code]
+
     # Примерное время на покупку (с учетом rate limit)
     estimated_time = quantity * API_REQUEST_DELAY
 
     # Отправляем сообщение о начале покупки
     progress_msg = await message.answer(
         f"🔄 <b>Покупка номеров началась...</b>\n\n"
-        f"🌍 Страна: <b>{COUNTRY_CODE}</b>\n"
+        f"🌍 Страна: <b>{country_label}</b>\n"
         f"📊 Количество: <b>{quantity}</b>\n"
         f"📅 Срок аренды: <b>{DURATION_MONTHS} мес.</b>\n"
         f"⏱️ Примерное время: <b>~{estimated_time} сек.</b>\n\n"
@@ -120,7 +174,7 @@ async def process_quantity(message: Message, state: FSMContext):
             # Генерируем уникальное имя с датой и временем
             custom_name = generate_custom_name()
 
-            result = await purchase_number(custom_name, COUNTRY_CODE, DURATION_MONTHS, AUTO_RENEW)
+            result = await purchase_number(custom_name, country_code, DURATION_MONTHS, AUTO_RENEW)
 
             if result.get("success"):
                 numbers = result.get("numbers", [])
@@ -137,7 +191,7 @@ async def process_quantity(message: Message, state: FSMContext):
                 try:
                     await progress_msg.edit_text(
                         f"🔄 <b>Покупка номеров...</b>\n\n"
-                        f"🌍 Страна: <b>{COUNTRY_CODE}</b>\n"
+                        f"🌍 Страна: <b>{country_label}</b>\n"
                         f"📊 Количество: <b>{quantity}</b>\n"
                         f"📅 Срок аренды: <b>{DURATION_MONTHS} мес.</b>\n\n"
                         f"Куплено: <b>{len(purchased_numbers)}/{quantity}</b>\n"
@@ -166,6 +220,7 @@ async def process_quantity(message: Message, state: FSMContext):
     # Формируем итоговое сообщение
     if purchased_numbers:
         response_text = f"✅ <b>Покупка завершена!</b>\n\n"
+        response_text += f"🌍 Страна: <b>{country_label}</b>\n"
         response_text += f"💰 Общая стоимость: <b>{total_cost} кредитов</b>\n"
         response_text += f"📊 Куплено номеров: <b>{len(purchased_numbers)}</b>\n\n"
 
