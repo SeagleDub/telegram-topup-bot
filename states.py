@@ -25,6 +25,7 @@ class Form(StatesGroup):
     # Уникализация изображений
     images_unicalization = State()
     unicalization_copies = State()
+    unicalization_archives = State()
 
     # Рассылка
     broadcast_collecting = State()

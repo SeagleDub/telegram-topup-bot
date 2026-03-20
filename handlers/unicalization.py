@@ -5,6 +5,7 @@ import random
 import string
 import uuid
 import zipfile
+import hashlib
 from datetime import datetime
 from io import BytesIO
 from typing import Tuple
@@ -26,6 +27,35 @@ def generate_random_filename(length=12, ext='jpg'):
     """Генерирует случайное имя файла"""
     random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
     return f"{random_str}.{ext}"
+
+
+def build_processed_image_bytes(image_data: bytes) -> bytes:
+    """Уникализирует одно изображение и возвращает его байты"""
+    img_processed, img_format = modify_image(BytesIO(image_data))
+    output = BytesIO()
+    save_params = {}
+
+    if img_format.upper() in ('JPEG', 'JPG'):
+        save_params['quality'] = random.randint(92, 98)
+        save_params['optimize'] = True
+    elif img_format.upper() == 'PNG':
+        save_params['optimize'] = True
+        save_params['compress_level'] = random.randint(6, 9)
+    elif img_format.upper() == 'WEBP':
+        save_params['quality'] = random.randint(92, 98)
+        save_params['method'] = 6
+    elif img_format.upper() == 'TIFF':
+        save_params['compression'] = 'tiff_lzw'
+
+    if img_format.upper() == 'JPEG' and hasattr(img_processed, '_exif'):
+        img_processed.save(output, format=img_format, exif=img_processed._exif, **save_params)
+    elif img_format.upper() == 'PNG' and hasattr(img_processed, '_png_info'):
+        img_processed.save(output, format=img_format, pnginfo=img_processed._png_info, **save_params)
+    else:
+        img_processed.save(output, format=img_format, **save_params)
+
+    output.seek(0)
+    return output.read()
 
 def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
     """Применяет случайные фильтры и изменяет метаданные изображения"""
@@ -127,48 +157,45 @@ def modify_image(file_content: BytesIO) -> Tuple[Image.Image, str]:
 
     return img, img_format
 
-async def process_image(bot: Bot, file_id: str, user_id: int, copies: int) -> BufferedInputFile:
-    """Обрабатывает изображение и создает архив с уникализированными копиями"""
+async def process_image(bot: Bot, file_id: str, user_id: int, copies: int, archives_count: int) -> BufferedInputFile:
+    """Создает общий архив с несколькими архивами, каждый содержит уникальные копии изображения"""
     file = await bot.get_file(file_id)
     file_content = await bot.download_file(file.file_path)
+    source_bytes = file_content.getvalue()
     file_name = file.file_path.split('/')[-1]
     name_parts = file_name.rsplit('.', 1)
     ext = name_parts[1] if len(name_parts) > 1 else 'jpg'
 
-    zip_buffer = BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for i in range(copies):
-            unique_file_name = generate_random_filename(ext=ext)
+    bundle_buffer = BytesIO()
+    used_hashes = set()
 
-            img_processed, img_format = modify_image(BytesIO(file_content.getvalue()))
-            output = BytesIO()
-            save_params = {}
+    with zipfile.ZipFile(bundle_buffer, "w", zipfile.ZIP_DEFLATED) as bundle_zip:
+        for archive_index in range(1, archives_count + 1):
+            archive_buffer = BytesIO()
+            with zipfile.ZipFile(archive_buffer, "w", zipfile.ZIP_DEFLATED) as archive_zip:
+                for _ in range(copies):
+                    unique_file_name = generate_random_filename(ext=ext)
 
-            if img_format.upper() in ('JPEG', 'JPG'):
-                save_params['quality'] = random.randint(92, 98)
-                save_params['optimize'] = True
-            elif img_format.upper() == 'PNG':
-                save_params['optimize'] = True
-                save_params['compress_level'] = random.randint(6, 9)
-            elif img_format.upper() == 'WEBP':
-                save_params['quality'] = random.randint(92, 98)
-                save_params['method'] = 6
-            elif img_format.upper() == 'TIFF':
-                save_params['compression'] = 'tiff_lzw'
+                    image_bytes = None
+                    for _attempt in range(10):
+                        candidate = build_processed_image_bytes(source_bytes)
+                        candidate_hash = hashlib.sha256(candidate).hexdigest()
+                        if candidate_hash not in used_hashes:
+                            used_hashes.add(candidate_hash)
+                            image_bytes = candidate
+                            break
 
-            if img_format.upper() == 'JPEG' and hasattr(img_processed, '_exif'):
-                img_processed.save(output, format=img_format, exif=img_processed._exif, **save_params)
-            elif img_format.upper() == 'PNG' and hasattr(img_processed, '_png_info'):
-                img_processed.save(output, format=img_format, pnginfo=img_processed._png_info, **save_params)
-            else:
-                img_processed.save(output, format=img_format, **save_params)
+                    if image_bytes is None:
+                        raise ValueError("Не удалось сгенерировать достаточное количество уникальных изображений")
 
-            output.seek(0)
-            zip_file.writestr(unique_file_name, output.read())
+                    archive_zip.writestr(unique_file_name, image_bytes)
 
-    zip_buffer.seek(0)
-    zip_filename = f"images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-    return BufferedInputFile(zip_buffer.read(), filename=zip_filename)
+            archive_buffer.seek(0)
+            bundle_zip.writestr(f"archive_{archive_index}.zip", archive_buffer.read())
+
+    bundle_buffer.seek(0)
+    zip_filename = f"images_archives_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return BufferedInputFile(bundle_buffer.read(), filename=zip_filename)
 
 async def process_archive(bot: Bot, file_id: str, user_id: int) -> BufferedInputFile:
     """Обрабатывает архив с изображениями - уникализирует каждое изображение (по 1 копии)"""
@@ -197,38 +224,14 @@ async def process_archive(bot: Bot, file_id: str, user_id: int) -> BufferedInput
                     image_buffer = BytesIO(image_data)
 
                     # Уникализируем изображение
-                    img_processed, img_format = modify_image(image_buffer)
+                    processed_image_bytes = build_processed_image_bytes(image_buffer.read())
 
                     # Генерируем новое имя файла
                     name_parts = file_name.rsplit('.', 1)
                     ext = name_parts[1] if len(name_parts) > 1 else 'jpg'
                     unique_file_name = generate_random_filename(ext=ext)
 
-                    # Сохраняем уникализированное изображение
-                    output = BytesIO()
-                    save_params = {}
-
-                    if img_format.upper() in ('JPEG', 'JPG'):
-                        save_params['quality'] = random.randint(92, 98)
-                        save_params['optimize'] = True
-                    elif img_format.upper() == 'PNG':
-                        save_params['optimize'] = True
-                        save_params['compress_level'] = random.randint(6, 9)
-                    elif img_format.upper() == 'WEBP':
-                        save_params['quality'] = random.randint(92, 98)
-                        save_params['method'] = 6
-                    elif img_format.upper() == 'TIFF':
-                        save_params['compression'] = 'tiff_lzw'
-
-                    if img_format.upper() == 'JPEG' and hasattr(img_processed, '_exif'):
-                        img_processed.save(output, format=img_format, exif=img_processed._exif, **save_params)
-                    elif img_format.upper() == 'PNG' and hasattr(img_processed, '_png_info'):
-                        img_processed.save(output, format=img_format, pnginfo=img_processed._png_info, **save_params)
-                    else:
-                        img_processed.save(output, format=img_format, **save_params)
-
-                    output.seek(0)
-                    output_zip.writestr(unique_file_name, output.read())
+                    output_zip.writestr(unique_file_name, processed_image_bytes)
 
                 except Exception as e:
                     # Если не удалось обработать изображение, пропускаем его
@@ -241,6 +244,22 @@ async def process_archive(bot: Bot, file_id: str, user_id: int) -> BufferedInput
     output_zip_buffer.seek(0)
     zip_filename = f"unicalized_archive_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
     return BufferedInputFile(output_zip_buffer.read(), filename=zip_filename)
+
+
+async def process_archive_multiple(bot: Bot, file_id: str, user_id: int, archives_count: int) -> BufferedInputFile:
+    """Создает общий архив с несколькими уникализированными ZIP-архивами"""
+    if archives_count == 1:
+        return await process_archive(bot, file_id, user_id)
+
+    bundle_buffer = BytesIO()
+    with zipfile.ZipFile(bundle_buffer, "w", zipfile.ZIP_DEFLATED) as bundle_zip:
+        for archive_index in range(1, archives_count + 1):
+            archive_file = await process_archive(bot, file_id, user_id)
+            bundle_zip.writestr(f"archive_{archive_index}.zip", archive_file.data)
+
+    bundle_buffer.seek(0)
+    zip_filename = f"unicalized_archives_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    return BufferedInputFile(bundle_buffer.read(), filename=zip_filename)
 
 @router.message(F.text == "🖼️ Уникализатор")
 async def images_unicalization_initiation(message: Message, state: FSMContext):
@@ -267,16 +286,8 @@ async def receive_image(message: Message, state: FSMContext):
         file_id = message.document.file_id
         await state.update_data(unicalization_file_id=file_id, is_archive=True)
 
-        await message.answer("🔄 Обрабатываю архив с изображениями...", reply_markup=cancel_kb)
-        try:
-            images_zip = await process_archive(message.bot, file_id, message.chat.id)
-            await message.bot.send_document(message.chat.id, document=images_zip)
-            await message.answer("✅ Все изображения из архива уникализированы.", reply_markup=get_menu_keyboard(message.chat.id))
-        except Exception as e:
-            bugsnag.notify(e)
-            await message.answer("❌ Произошла ошибка при обработке архива.")
-
-        await state.clear()
+        await message.answer("Введите количество архивов (например, 3):", reply_markup=cancel_kb)
+        await state.set_state(Form.unicalization_archives)
         return
 
     # Проверка на изображение
@@ -291,37 +302,102 @@ async def receive_image(message: Message, state: FSMContext):
 
     await state.update_data(unicalization_file_id=file_id, is_archive=False)
 
-    await message.answer("Введите количество уникализированных копий (например, 5):", reply_markup=cancel_kb)
+    await message.answer("Введите количество картинок в каждом архиве (например, 5):", reply_markup=cancel_kb)
     await state.set_state(Form.unicalization_copies)
 
 @router.message(Form.unicalization_copies)
 async def receive_copy_count(message: Message, state: FSMContext):
-    """Обрабатывает количество копий и выполняет уникализацию"""
+    """Обрабатывает количество картинок в архиве и переводит к шагу выбора количества архивов"""
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
         return
 
     if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("❌ Введите корректное положительное число копий.", reply_markup=cancel_kb)
+        await message.answer("❌ Введите корректное положительное число картинок.", reply_markup=cancel_kb)
         return
 
-    count = int(message.text)
-    if count > 50:
-        await message.answer("⚠️ Нельзя создать более 50 копий за раз. Пожалуйста, введите число от 1 до 50.", reply_markup=cancel_kb)
+    images_per_archive = int(message.text)
+
+    await state.update_data(unicalization_copies=images_per_archive)
+    await message.answer(
+        "Введите количество архивов (например, 3):",
+        reply_markup=cancel_kb
+    )
+    await state.set_state(Form.unicalization_archives)
+
+
+@router.message(Form.unicalization_archives)
+async def receive_archive_count(message: Message, state: FSMContext):
+    """Обрабатывает количество архивов и запускает уникализацию"""
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Действие отменено. Возвращаю в главное меню ⬅️", reply_markup=get_menu_keyboard(message.from_user.id))
         return
+
+    if not message.text.isdigit() or int(message.text) <= 0:
+        await message.answer("❌ Введите корректное положительное число архивов.", reply_markup=cancel_kb)
+        return
+
+    archives_count = int(message.text)
 
     data = await state.get_data()
+    is_archive = data.get("is_archive", False)
     unicalization_file_id = data.get("unicalization_file_id")
+    images_per_archive = data.get("unicalization_copies")
 
-    await message.answer("🔄 Обрабатываю изображение...", reply_markup=cancel_kb)
-    try:
-        images_zip = await process_image(message.bot, unicalization_file_id, message.chat.id, count)
-        await message.bot.send_document(message.chat.id, document=images_zip)
-        await message.answer(f"✅ Уникализировано {count} копий.", reply_markup=get_menu_keyboard(message.chat.id))
+    if not unicalization_file_id:
+        await state.clear()
+        await message.answer(
+            "❌ Данные сессии потеряны. Запустите уникализатор заново.",
+            reply_markup=get_menu_keyboard(message.from_user.id)
+        )
+        return
 
-    except Exception as e:
-        bugsnag.notify(e)
-        await message.answer("❌ Произошла ошибка при обработке изображения.")
+    if is_archive:
+        await message.answer("🔄 Обрабатываю архив и собираю результат...", reply_markup=cancel_kb)
+        try:
+            images_zip = await process_archive_multiple(
+                message.bot,
+                unicalization_file_id,
+                message.chat.id,
+                archives_count
+            )
+            await message.bot.send_document(message.chat.id, document=images_zip)
+            await message.answer(
+                f"✅ Готово! Создано архивов: {archives_count}.",
+                reply_markup=get_menu_keyboard(message.chat.id)
+            )
+        except Exception as e:
+            bugsnag.notify(e)
+            await message.answer("❌ Произошла ошибка при обработке архива.")
+    else:
+        if not images_per_archive:
+            await state.clear()
+            await message.answer(
+                "❌ Данные сессии потеряны. Запустите уникализатор заново.",
+                reply_markup=get_menu_keyboard(message.from_user.id)
+            )
+            return
+
+        await message.answer("🔄 Обрабатываю изображение и собираю архивы...", reply_markup=cancel_kb)
+        try:
+            images_zip = await process_image(
+                message.bot,
+                unicalization_file_id,
+                message.chat.id,
+                images_per_archive,
+                archives_count
+            )
+            await message.bot.send_document(message.chat.id, document=images_zip)
+            await message.answer(
+                f"✅ Готово! Создано архивов: {archives_count}, "
+                f"картинок в каждом: {images_per_archive}.",
+                reply_markup=get_menu_keyboard(message.chat.id)
+            )
+
+        except Exception as e:
+            bugsnag.notify(e)
+            await message.answer("❌ Произошла ошибка при обработке изображения.")
 
     await state.clear()
