@@ -123,14 +123,27 @@ def get_card_bank_keyboard():
     """Клавиатура выбора банка для действий с картами"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏦 AdsCard", callback_data="card_bank:adscard")],
-        [InlineKeyboardButton(text="🃏 MultiCards (скоро)", callback_data="card_bank:multicards")]
+        [InlineKeyboardButton(text="🃏 MultiCards", callback_data="card_bank:multicards")]
     ])
 
 
-def get_card_action_keyboard():
-    """Клавиатура выбора действия с картой"""
+def get_card_action_keyboard(bank: str = "adscard"):
+    """Клавиатура выбора действия с картой (зависит от банка).
+
+    У MultiCards лимит раздельный: глобальный и дневной. У AdsCard — один лимит.
+    """
+    if bank == "multicards":
+        limit_buttons = [
+            [InlineKeyboardButton(text="💵 Глобальный лимит", callback_data="card_action:limit_total")],
+            [InlineKeyboardButton(text="📅 Дневной лимит", callback_data="card_action:limit_daily")],
+        ]
+    else:
+        limit_buttons = [
+            [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
+        ]
+
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
+        *limit_buttons,
         [InlineKeyboardButton(text="🚫 Заблокировать", callback_data="card_action:block")],
         [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")]
     ])

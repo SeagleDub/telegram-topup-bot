@@ -1,10 +1,13 @@
 """
 Обработчики для функции "Действия с картами".
 
-Поток: выбор банка -> ввод номера карты -> выбор действия
+Поток: выбор банка -> ввод полного номера карты -> выбор действия
 (поменять лимит / заблокировать / последние транзакции).
 
-Сейчас реализован только банк AdsCard. MultiCards — заглушка ("скоро").
+Поддерживаются два банка:
+- AdsCard   (services.adscard)   — командные эндпоинты teams/*, лимит один.
+- MultiCards (services.multicards) — JWT-логин, лимит раздельный (глобальный/дневной).
+
 Номера карт выводятся маскированно (последние 4 цифры).
 """
 import logging
@@ -22,45 +25,60 @@ from keyboards import (
     get_card_block_confirm_keyboard,
 )
 from utils import last_messages, delete_last_messages
-from services.adscard import (
-    find_card_by_number,
-    set_card_limit,
-    block_card,
-    get_team_transactions,
-    card_digits,
-)
+import services.adscard as adscard
+import services.multicards as multicards
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
-# Период для выборки транзакций и максимум выводимых записей
-TRANSACTIONS_TIME = "month"
 MAX_TRANSACTIONS = 10
+ADSCARD_TRANSACTIONS_TIME = "month"
 
-# Человекочитаемые статусы карт AdsCard
-CARD_STATUS_LABELS = {
-    "A": "🟢 Активна",
-    "D": "🔴 Заблокирована",
+BANK_LABELS = {"adscard": "AdsCard", "multicards": "MultiCards"}
+
+# Метки статусов карт по банкам
+STATUS_LABELS = {
+    "adscard": {"A": "🟢 Активна", "D": "🔴 Заблокирована"},
+    "multicards": {"ACTIVE": "🟢 Активна", "FROZEN": "🔵 Заморожена", "CLOSED": "🔴 Закрыта"},
+}
+
+# Диапазоны лимитов для валидации ввода (kind -> (min, max|None))
+LIMIT_RANGES = {
+    "adscard": (0, None),
+    "total": (0, 100000),
+    "daily": (0, 10000),
+}
+
+LIMIT_PROMPTS = {
+    "adscard": "💵 Введите новый лимит карты (число):",
+    "total": "💵 Введите новый глобальный лимит (число, до 100000):",
+    "daily": "📅 Введите новый дневной лимит (число, до 10000):",
 }
 
 
-# TODO(diagnostic): временный вывод технических деталей ошибки пользователю.
-# Убрать после диагностики проблемы с AdsCard (вернуть нейтральные сообщения).
-def _error_detail(result: dict) -> str:
-    """Достаёт человекочитаемую деталь ошибки из ответа сервиса."""
-    if not isinstance(result, dict):
-        return ""
-    detail = result.get("details") or result.get("error") or ""
-    return f"\n\n🛠 {detail}" if detail else ""
+# --------------------------------------------------------------------------- #
+# Хелперы
+# --------------------------------------------------------------------------- #
+def mask_card_number(number) -> str:
+    """Маскирует номер карты, оставляя последние 4 цифры."""
+    digits = "".join(ch for ch in str(number or "") if ch.isdigit())
+    if len(digits) < 4:
+        return "****"
+    return f"**** **** **** {digits[-4:]}"
+
+
+def _digits(value) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _is_error(result) -> bool:
+    """Признак ошибочного ответа сервиса (успех card/list MultiCards — список)."""
+    return isinstance(result, dict) and (bool(result.get("error")) or result.get("success") is False)
 
 
 def _first_card(result: dict) -> dict | None:
-    """Достаёт первую карту из ответа AdsCard вида data: {"0": {...карта...}}.
-
-    Возвращает None, если data отсутствует или это не карточный объект
-    (например, {"success": true}).
-    """
+    """Первая карта из ответа AdsCard вида data: {"0": {...карта...}}."""
     data = result.get("data") if isinstance(result, dict) else None
     if not isinstance(data, dict):
         return None
@@ -70,56 +88,70 @@ def _first_card(result: dict) -> dict | None:
     return None
 
 
-def mask_card_number(number) -> str:
-    """Маскирует номер карты, оставляя последние 4 цифры."""
-    digits = "".join(ch for ch in str(number or "") if ch.isdigit())
-    if len(digits) < 4:
-        return "****"
-    return f"**** **** **** {digits[-4:]}"
+def get_card_id(bank: str, card: dict):
+    """ID карты (у обоих банков поле id)."""
+    return card.get("id")
 
 
-async def _show_action_menu(target, user_id: int, state: FSMContext, card_number) -> None:
+def get_card_number(bank: str, card: dict):
+    """Полный номер карты (adscard: number, multicards: cardNumber)."""
+    return card.get("number") if bank == "adscard" else card.get("cardNumber")
+
+
+def format_card_summary(bank: str, card: dict) -> str:
+    """Краткая карточка для показа (без чувствительных данных)."""
+    status_raw = str(card.get("status"))
+    status = STATUS_LABELS.get(bank, {}).get(status_raw, status_raw)
+    currency = str(card.get("currency", "")).upper()
+    masked = mask_card_number(get_card_number(bank, card))
+
+    lines = [
+        "💳 <b>Карта найдена</b>",
+        f"Банк: {BANK_LABELS.get(bank, bank)}",
+        f"Номер: <code>{masked}</code>",
+        f"Статус: {status}",
+    ]
+    if bank == "adscard":
+        limit_type = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
+        lines.append(f"Лимит: <b>{card.get('limit', '—')}</b> {currency}{limit_type}")
+        lines.append(f"Баланс: <b>{card.get('balance', '—')}</b> {currency}")
+        if card.get("comment"):
+            lines.append(f"Комментарий: {card.get('comment')}")
+    else:
+        lines.append(f"Баланс: <b>{card.get('balanceAmount', '—')}</b> {currency}")
+        lines.append(f"Потрачено всего: <b>{card.get('spendAmount', '—')}</b> {currency}")
+        lines.append(f"Потрачено за день: <b>{card.get('dailySpendAmount', '—')}</b> {currency}")
+        if card.get("note"):
+            lines.append(f"Заметка: {card.get('note')}")
+    return "\n".join(lines)
+
+
+async def _find_card(bank: str, number: str):
+    if bank == "adscard":
+        return await adscard.find_card_by_number(number)
+    return await multicards.find_card_by_number(number)
+
+
+async def _show_action_menu(target, user_id: int, state: FSMContext, bank: str, card_number) -> None:
     """Показывает меню действий по выбранной карте и возвращает в состояние выбора.
 
-    target — объект с методом .answer (Message или query.message). Карта
-    (card_id/card_number) остаётся в state, чтобы можно было выполнить ещё
-    одно действие без повторного поиска.
+    Карта (bank/card_id/card_number) остаётся в state — можно сделать ещё одно
+    действие без повторного поиска.
     """
     masked = mask_card_number(card_number)
     m1 = await target.answer(
-        f"💳 Карта <code>{masked}</code>\nВыберите действие:",
+        f"💳 Карта <code>{masked}</code> ({BANK_LABELS.get(bank, bank)})\nВыберите действие:",
         parse_mode="HTML",
-        reply_markup=get_card_action_keyboard(),
+        reply_markup=get_card_action_keyboard(bank),
     )
     m2 = await target.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     last_messages[user_id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.card_actions_choose_action)
 
 
-def format_card_summary(card: dict) -> str:
-    """Формирует краткую карточку для показа пользователю (без чувствительных данных)."""
-    status = CARD_STATUS_LABELS.get(str(card.get("status")), str(card.get("status", "—")))
-    currency = str(card.get("currency", "")).upper()
-    limit = card.get("limit", "—")
-    balance = card.get("balance", "—")
-    comment = card.get("comment")
-    limit_type_label = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
-
-    lines = [
-        "💳 <b>Карта найдена</b>",
-        f"Номер: <code>{mask_card_number(card.get('number'))}</code>",
-        f"Статус: {status}",
-        f"Лимит: <b>{limit}</b> {currency}{limit_type_label}",
-        f"Баланс: <b>{balance}</b> {currency}",
-    ]
-    if comment:
-        lines.append(f"Комментарий: {comment}")
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # Шаг 1. Запуск — выбор банка
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.message(F.text == "💳 Действия с картами")
 async def start_card_actions(message: Message, state: FSMContext):
     """Начинает флоу действий с картами — предлагает выбрать банк."""
@@ -133,19 +165,14 @@ async def start_card_actions(message: Message, state: FSMContext):
     await state.set_state(Form.card_actions_choose_bank)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # Шаг 2. Выбор банка
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.callback_query(F.data.startswith("card_bank:"), Form.card_actions_choose_bank)
 async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор банка."""
     bank = query.data.split(":", 1)[1]
-
-    if bank == "multicards":
-        await query.answer("MultiCards временно недоступен", show_alert=True)
-        return
-
-    if bank != "adscard":
+    if bank not in BANK_LABELS:
         await query.answer("❌ Неизвестный банк", show_alert=True)
         return
 
@@ -154,7 +181,7 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     await delete_last_messages(query.from_user.id, query.message.bot)
 
     m1 = await query.message.answer(
-        "🏦 <b>AdsCard</b>\n\nВведите полный номер карты:",
+        f"🏦 <b>{BANK_LABELS[bank]}</b>\n\nВведите полный номер карты:",
         parse_mode="HTML",
         reply_markup=cancel_kb,
     )
@@ -162,20 +189,23 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     await state.set_state(Form.card_actions_enter_number)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # Шаг 3. Ввод номера карты и поиск
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.message(Form.card_actions_enter_number)
 async def card_number_entered(message: Message, state: FSMContext):
-    """Ищет карту по введённому номеру."""
+    """Ищет карту по введённому полному номеру."""
     # "❌ Отмена" перехватывается глобальным обработчиком в common.py
     number = message.text.strip()
     if not any(ch.isdigit() for ch in number):
         await message.answer("❌ Введите номер карты (цифры).", reply_markup=cancel_kb)
         return
 
+    data = await state.get_data()
+    bank = data.get("bank", "adscard")
+
     progress = await message.answer("🔄 Ищу карту...")
-    result = await find_card_by_number(number)
+    result = await _find_card(bank, number)
 
     try:
         await progress.delete()
@@ -184,7 +214,8 @@ async def card_number_entered(message: Message, state: FSMContext):
 
     if isinstance(result, dict) and result.get("error"):
         await message.answer(
-            "❌ Не удалось получить список карт AdsCard. Попробуйте позже." + _error_detail(result),
+            f"❌ Не удалось получить список карт {BANK_LABELS.get(bank, bank)}. "
+            "Попробуйте позже.",
             reply_markup=cancel_kb,
         )
         return
@@ -198,26 +229,27 @@ async def card_number_entered(message: Message, state: FSMContext):
 
     card = result["card"]
     await delete_last_messages(message.from_user.id, message.bot)
-    await state.update_data(card_id=card.get("id"), card_number=card.get("number"))
+    await state.update_data(card_id=get_card_id(bank, card), card_number=get_card_number(bank, card))
 
-    text = format_card_summary(card)
+    text = format_card_summary(bank, card)
     if result.get("multiple"):
         text += "\n\n⚠️ Найдено несколько карт, показана первая."
 
-    m1 = await message.answer(text, parse_mode="HTML", reply_markup=get_card_action_keyboard())
+    m1 = await message.answer(text, parse_mode="HTML", reply_markup=get_card_action_keyboard(bank))
     m2 = await message.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.card_actions_choose_action)
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # Шаг 4. Выбор действия
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.callback_query(F.data.startswith("card_action:"), Form.card_actions_choose_action)
 async def card_action_selected(query: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор действия с картой."""
     action = query.data.split(":", 1)[1]
     data = await state.get_data()
+    bank = data.get("bank", "adscard")
     card_id = data.get("card_id")
 
     if card_id is None:
@@ -229,13 +261,12 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    if action == "limit":
+    if action in ("limit", "limit_total", "limit_daily"):
+        kind = {"limit": "adscard", "limit_total": "total", "limit_daily": "daily"}[action]
+        await state.update_data(limit_kind=kind)
         await query.answer()
         await delete_last_messages(query.from_user.id, query.message.bot)
-        m1 = await query.message.answer(
-            "💵 Введите новый лимит карты (число):",
-            reply_markup=cancel_kb,
-        )
+        m1 = await query.message.answer(LIMIT_PROMPTS[kind], reply_markup=cancel_kb)
         last_messages[query.from_user.id] = [m1.message_id]
         await state.set_state(Form.card_actions_enter_limit)
 
@@ -253,91 +284,105 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
 
     elif action == "transactions":
         await query.answer()
-        await _show_transactions(query, state)
+        await _show_transactions(query, state, bank, card_id, data.get("card_number"))
 
     else:
         await query.answer("❌ Неизвестное действие", show_alert=True)
 
 
-async def _show_transactions(query: CallbackQuery, state: FSMContext):
-    """Загружает транзакции команды и выводит последние по выбранной карте.
-
-    teams/cards_transactions не принимает card_id, поэтому фильтруем результат
-    по номеру выбранной карты (по последним 4 цифрам) на стороне бота.
-    """
-    data = await state.get_data()
-    card_number = data.get("card_number")
-
+# --------------------------------------------------------------------------- #
+# Транзакции
+# --------------------------------------------------------------------------- #
+async def _show_transactions(query: CallbackQuery, state: FSMContext, bank: str, card_id, card_number):
+    """Загружает транзакции и выводит последние по выбранной карте."""
     await delete_last_messages(query.from_user.id, query.message.bot)
     progress = await query.message.answer("🔄 Загружаю транзакции...")
 
-    result = await get_team_transactions(TRANSACTIONS_TIME)
+    if bank == "adscard":
+        result = await adscard.get_team_transactions(ADSCARD_TRANSACTIONS_TIME)
+    else:
+        start, end = multicards.current_month_period()
+        result = await multicards.get_transactions(start, end)
 
     try:
         await progress.delete()
     except Exception:
         pass
 
-    if result.get("error") or result.get("success") is False:
+    if _is_error(result):
         await query.message.answer(
-            "❌ Не удалось получить транзакции AdsCard. Попробуйте позже." + _error_detail(result),
+            f"❌ Не удалось получить транзакции {BANK_LABELS.get(bank, bank)}. "
+            "Попробуйте позже.",
         )
-        await _show_action_menu(query.message, query.from_user.id, state, card_number)
+        await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
         return
 
-    data_field = result.get("data", {})
-    transactions = list(data_field.values()) if isinstance(data_field, dict) else (data_field or [])
-
-    # Фильтр по выбранной карте: совпадение последних 4 цифр номера
-    card_last4 = card_digits(card_number)[-4:]
-    if card_last4:
-        transactions = [
-            tx for tx in transactions
-            if card_digits(tx.get("card_number")) and card_digits(tx.get("card_number"))[-4:] == card_last4
-        ]
+    transactions = _extract_transactions(bank, result)
+    transactions = [tx for tx in transactions if _tx_matches(bank, tx, card_id, card_number)]
 
     if not transactions:
         await query.message.answer("📭 Транзакций по карте за период не найдено.")
-        await _show_action_menu(query.message, query.from_user.id, state, card_number)
+        await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
         return
 
     lines = ["📜 <b>Последние транзакции</b>\n"]
     for i, tx in enumerate(transactions[:MAX_TRANSACTIONS], 1):
-        date = tx.get("date", "—")
-        tx_type = tx.get("type") or tx.get("status") or "—"
-        amount = tx.get("amount", "—")
-        currency = str(tx.get("currency", "")).upper()
-        merchant = tx.get("merchant") or "—"
-        lines.append(
-            f"<b>#{i}</b> {date}\n"
-            f"   {tx_type} — <b>{amount}</b> {currency}\n"
-            f"   🏬 {merchant}"
-        )
+        lines.append(_format_transaction(bank, i, tx))
 
     await query.message.answer("\n".join(lines), parse_mode="HTML")
-    await _show_action_menu(query.message, query.from_user.id, state, card_number)
+    await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
 
 
-# ---------------------------------------------------------------------------
+def _extract_transactions(bank: str, result) -> list:
+    if bank == "adscard":
+        data = result.get("data", {})
+        return list(data.values()) if isinstance(data, dict) else (data or [])
+    items = result.get("items", []) if isinstance(result, dict) else []
+    return items or []
+
+
+def _tx_matches(bank: str, tx: dict, card_id, card_number) -> bool:
+    """Транзакция относится к выбранной карте — по id, иначе по последним 4 цифрам."""
+    id_field = "card_id" if bank == "adscard" else "cardId"
+    num_field = "card_number" if bank == "adscard" else "cardNumber"
+
+    if card_id is not None and tx.get(id_field) is not None:
+        return str(tx.get(id_field)) == str(card_id)
+
+    last4 = _digits(card_number)[-4:]
+    tx_digits = _digits(tx.get(num_field))
+    return bool(last4) and bool(tx_digits) and tx_digits[-4:] == last4
+
+
+def _format_transaction(bank: str, i: int, tx: dict) -> str:
+    currency = str(tx.get("currency", "")).upper()
+    amount = tx.get("amount", "—")
+    tx_type = tx.get("type") or tx.get("status") or "—"
+    if bank == "adscard":
+        date = tx.get("date", "—")
+        merchant = tx.get("merchant") or "—"
+    else:
+        date = tx.get("createdAt", "—")
+        merchant = tx.get("description") or "—"
+    return (
+        f"<b>#{i}</b> {date}\n"
+        f"   {tx_type} — <b>{amount}</b> {currency}\n"
+        f"   🏬 {merchant}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Шаг 5. Ввод нового лимита
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.message(Form.card_actions_enter_limit)
 async def card_limit_entered(message: Message, state: FSMContext):
     """Применяет новый лимит карты."""
     # "❌ Отмена" перехватывается глобальным обработчиком в common.py
-    raw = message.text.strip().replace(",", ".")
-    try:
-        value = float(raw)
-        if value < 0:
-            raise ValueError()
-    except ValueError:
-        await message.answer("❌ Введите корректное число (≥ 0).", reply_markup=cancel_kb)
-        return
-
-    limit = int(value) if value.is_integer() else value
-
     data = await state.get_data()
+    bank = data.get("bank", "adscard")
     card_id = data.get("card_id")
+    card_number = data.get("card_number")
+    kind = data.get("limit_kind", "adscard")
     menu_kb = get_menu_keyboard(message.from_user.id)
 
     if card_id is None:
@@ -345,43 +390,72 @@ async def card_limit_entered(message: Message, state: FSMContext):
         await message.answer("❌ Карта не выбрана. Начните заново.", reply_markup=menu_kb)
         return
 
+    low, high = LIMIT_RANGES.get(kind, (0, None))
+    raw = message.text.strip().replace(",", ".")
+    try:
+        value = float(raw)
+        if value < low or (high is not None and value > high):
+            raise ValueError()
+    except ValueError:
+        limit_hint = f" (от {low} до {high})" if high is not None else f" (≥ {low})"
+        await message.answer(f"❌ Введите корректное число{limit_hint}.", reply_markup=cancel_kb)
+        return
+
+    limit = int(value) if value.is_integer() else value
+
     await delete_last_messages(message.from_user.id, message.bot)
     progress = await message.answer("🔄 Меняю лимит...")
-    result = await set_card_limit(card_id, limit)
+
+    if bank == "adscard":
+        result = await adscard.set_card_limit(card_id, limit)
+    elif kind == "total":
+        result = await multicards.set_total_limit(card_id, limit)
+    else:
+        result = await multicards.set_daily_limit(card_id, limit)
 
     try:
         await progress.delete()
     except Exception:
         pass
 
-    if result.get("error") or result.get("success") is False:
-        await message.answer(
-            "❌ Не удалось изменить лимит. Попробуйте позже." + _error_detail(result),
-        )
+    if _is_error(result):
+        await message.answer("❌ Не удалось изменить лимит. Попробуйте позже.")
     else:
-        # Берём фактический лимит из ответа API (data: {"0": {...}}), иначе — введённый
-        applied = limit
-        first = _first_card(result)
-        if first and first.get("limit") is not None:
-            applied = first.get("limit")
+        applied = _applied_limit(bank, kind, result, limit)
+        kind_label = {"adscard": "Лимит", "total": "Глобальный лимит", "daily": "Дневной лимит"}[kind]
         await message.answer(
-            f"✅ Лимит карты <code>{mask_card_number(data.get('card_number'))}</code> "
+            f"✅ {kind_label} карты <code>{mask_card_number(card_number)}</code> "
             f"изменён на <b>{applied}</b>.",
             parse_mode="HTML",
         )
 
-    await _show_action_menu(message, message.from_user.id, state, data.get("card_number"))
+    await _show_action_menu(message, message.from_user.id, state, bank, card_number)
 
 
-# ---------------------------------------------------------------------------
+def _applied_limit(bank: str, kind: str, result, fallback):
+    """Фактический лимит из ответа API, иначе — введённое значение."""
+    if bank == "adscard":
+        card = _first_card(result)
+        if card and card.get("limit") is not None:
+            return card.get("limit")
+    elif isinstance(result, dict):
+        field = "limitAmount" if kind == "total" else "dailyLimitAmount"
+        if result.get(field) is not None:
+            return result.get(field)
+    return fallback
+
+
+# --------------------------------------------------------------------------- #
 # Шаг 6. Подтверждение блокировки
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 @router.callback_query(F.data.startswith("card_block_confirm:"), Form.card_actions_confirm_block)
 async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     """Обрабатывает подтверждение/отмену блокировки карты."""
     choice = query.data.split(":", 1)[1]
     data = await state.get_data()
+    bank = data.get("bank", "adscard")
     card_id = data.get("card_id")
+    card_number = data.get("card_number")
     menu_kb = get_menu_keyboard(query.from_user.id)
 
     await query.answer()
@@ -392,40 +466,54 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    card_number = data.get("card_number")
     masked = mask_card_number(card_number)
 
     if choice != "yes":
         await query.message.answer("Блокировка отменена.")
-        await _show_action_menu(query.message, query.from_user.id, state, card_number)
+        await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
         return
 
     progress = await query.message.answer("🔄 Блокирую карту...")
-    result = await block_card(card_id)
+    if bank == "adscard":
+        result = await adscard.block_card(card_id)
+    else:
+        result = await multicards.block_card(card_id)
 
     try:
         await progress.delete()
     except Exception:
         pass
 
-    if result.get("error") or result.get("success") is False:
+    if _is_error(result):
+        await query.message.answer("❌ Не удалось заблокировать карту. Попробуйте позже.")
+    elif not _block_confirmed(bank, result):
         await query.message.answer(
-            "❌ Не удалось заблокировать карту. Попробуйте позже." + _error_detail(result),
+            f"⚠️ Запрос отправлен, но карта <code>{masked}</code> не выглядит "
+            "заблокированной. Проверьте вручную.",
+            parse_mode="HTML",
         )
     else:
-        # Подтверждаем блокировку по ответу: closed_at заполнен или status == "D".
-        # Если ответ — карта без признаков блокировки, предупреждаем.
-        card = _first_card(result)
-        if card is not None and not (card.get("closed_at") or str(card.get("status")) == "D"):
-            await query.message.answer(
-                f"⚠️ Запрос отправлен, но карта <code>{masked}</code> не выглядит "
-                f"заблокированной (статус: {card.get('status')}). Проверьте вручную.",
-                parse_mode="HTML",
-            )
-        else:
-            await query.message.answer(
-                f"✅ Карта <code>{masked}</code> заблокирована.",
-                parse_mode="HTML",
-            )
+        await query.message.answer(
+            f"✅ Карта <code>{masked}</code> заблокирована.",
+            parse_mode="HTML",
+        )
 
-    await _show_action_menu(query.message, query.from_user.id, state, card_number)
+    await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
+
+
+def _block_confirmed(bank: str, result) -> bool:
+    """Подтверждение блокировки по ответу API.
+
+    AdsCard: closed_at заполнен или status == "D".
+    MultiCards: статус карты в ответе != ACTIVE.
+    Если в ответе нет карты — считаем успехом (отсутствие ошибки уже проверено).
+    """
+    if bank == "adscard":
+        card = _first_card(result)
+        if card is None:
+            return True
+        return bool(card.get("closed_at") or str(card.get("status")) == "D")
+
+    if isinstance(result, dict) and result.get("status"):
+        return str(result.get("status")) != "ACTIVE"
+    return True

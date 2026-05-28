@@ -18,6 +18,11 @@ LUBOYDOMEN_API_TOKEN = os.getenv("LUBOYDOMEN_API_TOKEN")
 ADSCARD_TOKEN = os.getenv("ADSCARD_TOKEN")            # Bearer-токен (заголовок Application-Authorization)
 ADSCARD_AUTH_TOKEN = os.getenv("ADSCARD_AUTH_TOKEN")  # auth_token в теле запроса
 
+# MultiCards API (банк для функции "Действия с картами")
+# Токен получается логином по email/password, кэшируется в памяти сервиса.
+MULTICARDS_EMAIL = os.getenv("MULTICARDS_EMAIL")
+MULTICARDS_PASSWORD = os.getenv("MULTICARDS_PASSWORD")
+
 # ID пользователей
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))
