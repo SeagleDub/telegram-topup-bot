@@ -14,6 +14,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 LUBOYDOMEN_API_TOKEN = os.getenv("LUBOYDOMEN_API_TOKEN")
 
+# AdsCard API (банк для функции "Действия с картами")
+ADSCARD_TOKEN = os.getenv("ADSCARD_TOKEN")            # Bearer-токен (заголовок Application-Authorization)
+ADSCARD_AUTH_TOKEN = os.getenv("ADSCARD_AUTH_TOKEN")  # auth_token в теле запроса
+
 # ID пользователей
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))

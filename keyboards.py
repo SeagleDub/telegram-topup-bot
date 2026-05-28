@@ -11,6 +11,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="📱 Получить SMS Google Ads")],
     [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
+    [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -26,6 +27,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="📱 Получить SMS Google Ads")],
     [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
     [KeyboardButton(text="🔄 Автопродление номеров")],
+    [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -114,6 +116,31 @@ def get_purchase_country_keyboard():
         [InlineKeyboardButton(text="🇬🇧 GB", callback_data="purchase_country:GB")],
         [InlineKeyboardButton(text="🇺🇸 US", callback_data="purchase_country:US")],
         [InlineKeyboardButton(text="🇨🇦 CA", callback_data="purchase_country:CA")]
+    ])
+
+
+def get_card_bank_keyboard():
+    """Клавиатура выбора банка для действий с картами"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏦 AdsCard", callback_data="card_bank:adscard")],
+        [InlineKeyboardButton(text="🃏 MultiCards (скоро)", callback_data="card_bank:multicards")]
+    ])
+
+
+def get_card_action_keyboard():
+    """Клавиатура выбора действия с картой"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
+        [InlineKeyboardButton(text="🚫 Заблокировать", callback_data="card_action:block")],
+        [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")]
+    ])
+
+
+def get_card_block_confirm_keyboard():
+    """Клавиатура подтверждения блокировки карты"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить блокировку", callback_data="card_block_confirm:yes")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="card_block_confirm:no")]
     ])
 
 

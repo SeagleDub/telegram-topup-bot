@@ -57,3 +57,10 @@ class Form(StatesGroup):
     selecting_auto_renewal_numbers = State()
     confirming_auto_renewal = State()
 
+    # Действия с картами
+    card_actions_choose_bank = State()
+    card_actions_enter_number = State()
+    card_actions_choose_action = State()
+    card_actions_enter_limit = State()
+    card_actions_confirm_block = State()
+
