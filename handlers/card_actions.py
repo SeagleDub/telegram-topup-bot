@@ -98,8 +98,13 @@ def get_card_number(bank: str, card: dict):
     return card.get("number") if bank == "adscard" else card.get("cardNumber")
 
 
+def _fmt(value):
+    """Значение для вывода: None/пусто -> '—'."""
+    return value if value not in (None, "") else "—"
+
+
 def format_card_summary(bank: str, card: dict) -> str:
-    """Краткая карточка для показа (без чувствительных данных)."""
+    """Карточка для показа (без чувствительных данных — без CVC/полного номера)."""
     status_raw = str(card.get("status"))
     status = STATUS_LABELS.get(bank, {}).get(status_raw, status_raw)
     currency = str(card.get("currency", "")).upper()
@@ -111,16 +116,41 @@ def format_card_summary(bank: str, card: dict) -> str:
         f"Номер: <code>{masked}</code>",
         f"Статус: {status}",
     ]
+
     if bank == "adscard":
         limit_type = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
-        lines.append(f"Лимит: <b>{card.get('limit', '—')}</b> {currency}{limit_type}")
-        lines.append(f"Баланс: <b>{card.get('balance', '—')}</b> {currency}")
+        lines.append(f"Лимит: <b>{_fmt(card.get('limit'))}</b> {currency}{limit_type}")
+        lines.append(f"Баланс: <b>{_fmt(card.get('balance'))}</b> {currency}")
+        lines.append(f"Потрачено: <b>{_fmt(card.get('expense'))}</b> {currency}")
+        if card.get("bank_limit") is not None:
+            lines.append(f"Банковский лимит: {card.get('bank_limit')} {currency}")
+        if card.get("date_expired"):
+            lines.append(f"Действует до: {card.get('date_expired')}")
+        if card.get("card_user_email"):
+            lines.append(f"Владелец: {card.get('card_user_email')}")
         if card.get("comment"):
             lines.append(f"Комментарий: {card.get('comment')}")
     else:
-        lines.append(f"Баланс: <b>{card.get('balanceAmount', '—')}</b> {currency}")
-        lines.append(f"Потрачено всего: <b>{card.get('spendAmount', '—')}</b> {currency}")
-        lines.append(f"Потрачено за день: <b>{card.get('dailySpendAmount', '—')}</b> {currency}")
+        lines.append(f"Глобальный лимит: <b>{_fmt(card.get('limitAmount'))}</b> {currency}")
+        lines.append(f"Дневной лимит: <b>{_fmt(card.get('dailyLimitAmount'))}</b> {currency}")
+        lines.append(f"Баланс: <b>{_fmt(card.get('balanceAmount'))}</b> {currency}")
+        lines.append(f"Потрачено всего: <b>{_fmt(card.get('spendAmount'))}</b> {currency}")
+        lines.append(f"Потрачено за день: <b>{_fmt(card.get('dailySpendAmount'))}</b> {currency}")
+        if card.get("refundAmount") is not None:
+            lines.append(f"Возвраты: {card.get('refundAmount')} {currency}")
+        exp_m, exp_y = card.get("cardExpiryMonth"), card.get("cardExpiryYear")
+        if exp_m and exp_y:
+            lines.append(f"Действует до: {int(exp_m):02d}/{exp_y}")
+        if card.get("autoRefillEnabled"):
+            thr, amt = card.get("autoRefillThreshold"), card.get("autoRefillAmount")
+            extra = f" (при ≤ {thr} пополнять на {amt})" if thr is not None and amt is not None else ""
+            lines.append(f"Автопополнение: вкл{extra}")
+        group = card.get("cardGroup") or {}
+        if isinstance(group, dict) and group.get("name"):
+            lines.append(f"Группа: {group.get('name')}")
+        owner = card.get("owner") or {}
+        if isinstance(owner, dict) and owner.get("email"):
+            lines.append(f"Владелец: {owner.get('email')}")
         if card.get("note"):
             lines.append(f"Заметка: {card.get('note')}")
     return "\n".join(lines)
