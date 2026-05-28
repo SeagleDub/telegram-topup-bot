@@ -135,8 +135,7 @@ def format_card_summary(bank: str, card: dict) -> str:
             lines.append(f"{label}: {value}")
 
     if bank == "adscard":
-        limit_type = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
-        money("Лимит", card.get("limit"), cur + limit_type)
+        money("Лимит", card.get("limit"))
         money("Баланс", card.get("balance"))
         money("Потрачено", card.get("expense"))
         money("Банковский лимит", card.get("bank_limit"))
