@@ -55,6 +55,21 @@ def _error_detail(result: dict) -> str:
     return f"\n\n🛠 {detail}" if detail else ""
 
 
+def _first_card(result: dict) -> dict | None:
+    """Достаёт первую карту из ответа AdsCard вида data: {"0": {...карта...}}.
+
+    Возвращает None, если data отсутствует или это не карточный объект
+    (например, {"success": true}).
+    """
+    data = result.get("data") if isinstance(result, dict) else None
+    if not isinstance(data, dict):
+        return None
+    for value in data.values():
+        if isinstance(value, dict) and any(k in value for k in ("id", "number", "status")):
+            return value
+    return None
+
+
 def mask_card_number(number) -> str:
     """Маскирует номер карты, оставляя последние 4 цифры."""
     digits = "".join(ch for ch in str(number or "") if ch.isdigit())
@@ -70,12 +85,13 @@ def format_card_summary(card: dict) -> str:
     limit = card.get("limit", "—")
     balance = card.get("balance", "—")
     comment = card.get("comment")
+    limit_type_label = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
 
     lines = [
         "💳 <b>Карта найдена</b>",
         f"Номер: <code>{mask_card_number(card.get('number'))}</code>",
         f"Статус: {status}",
-        f"Лимит: <b>{limit}</b> {currency}",
+        f"Лимит: <b>{limit}</b> {currency}{limit_type_label}",
         f"Баланс: <b>{balance}</b> {currency}",
     ]
     if comment:
@@ -273,13 +289,13 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext):
     lines = ["📜 <b>Последние транзакции</b>\n"]
     for i, tx in enumerate(transactions[:MAX_TRANSACTIONS], 1):
         date = tx.get("date", "—")
-        status = tx.get("status", "—")
+        tx_type = tx.get("type") or tx.get("status") or "—"
         amount = tx.get("amount", "—")
         currency = str(tx.get("currency", "")).upper()
         merchant = tx.get("merchant") or "—"
         lines.append(
             f"<b>#{i}</b> {date}\n"
-            f"   {status} — <b>{amount}</b> {currency}\n"
+            f"   {tx_type} — <b>{amount}</b> {currency}\n"
             f"   🏬 {merchant}"
         )
 
@@ -329,9 +345,14 @@ async def card_limit_entered(message: Message, state: FSMContext):
             reply_markup=menu_kb,
         )
     else:
+        # Берём фактический лимит из ответа API (data: {"0": {...}}), иначе — введённый
+        applied = limit
+        first = _first_card(result)
+        if first and first.get("limit") is not None:
+            applied = first.get("limit")
         await message.answer(
             f"✅ Лимит карты <code>{mask_card_number(data.get('card_number'))}</code> "
-            f"изменён на <b>{limit}</b>.",
+            f"изменён на <b>{applied}</b>.",
             parse_mode="HTML",
             reply_markup=menu_kb,
         )
@@ -371,16 +392,29 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
+    masked = mask_card_number(data.get("card_number"))
+
     if result.get("error") or result.get("success") is False:
         await query.message.answer(
             "❌ Не удалось заблокировать карту. Попробуйте позже." + _error_detail(result),
             reply_markup=menu_kb,
         )
     else:
-        await query.message.answer(
-            f"✅ Карта <code>{mask_card_number(data.get('card_number'))}</code> заблокирована.",
-            parse_mode="HTML",
-            reply_markup=menu_kb,
-        )
+        # Подтверждаем блокировку по ответу: closed_at заполнен или status == "D".
+        # Если ответ — карта без признаков блокировки, предупреждаем.
+        card = _first_card(result)
+        if card is not None and not (card.get("closed_at") or str(card.get("status")) == "D"):
+            await query.message.answer(
+                f"⚠️ Запрос отправлен, но карта <code>{masked}</code> не выглядит "
+                f"заблокированной (статус: {card.get('status')}). Проверьте вручную.",
+                parse_mode="HTML",
+                reply_markup=menu_kb,
+            )
+        else:
+            await query.message.answer(
+                f"✅ Карта <code>{masked}</code> заблокирована.",
+                parse_mode="HTML",
+                reply_markup=menu_kb,
+            )
 
     await state.clear()
