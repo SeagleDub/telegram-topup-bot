@@ -26,7 +26,8 @@ from services.adscard import (
     find_card_by_number,
     set_card_limit,
     block_card,
-    get_card_transactions,
+    get_team_transactions,
+    card_digits,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,16 @@ CARD_STATUS_LABELS = {
     "A": "🟢 Активна",
     "D": "🔴 Заблокирована",
 }
+
+
+# TODO(diagnostic): временный вывод технических деталей ошибки пользователю.
+# Убрать после диагностики проблемы с AdsCard (вернуть нейтральные сообщения).
+def _error_detail(result: dict) -> str:
+    """Достаёт человекочитаемую деталь ошибки из ответа сервиса."""
+    if not isinstance(result, dict):
+        return ""
+    detail = result.get("details") or result.get("error") or ""
+    return f"\n\n🛠 {detail}" if detail else ""
 
 
 def mask_card_number(number) -> str:
@@ -139,7 +150,7 @@ async def card_number_entered(message: Message, state: FSMContext):
 
     if isinstance(result, dict) and result.get("error"):
         await message.answer(
-            "❌ Не удалось получить список карт AdsCard. Попробуйте позже.",
+            "❌ Не удалось получить список карт AdsCard. Попробуйте позже." + _error_detail(result),
             reply_markup=cancel_kb,
         )
         return
@@ -208,18 +219,25 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
 
     elif action == "transactions":
         await query.answer()
-        await _show_transactions(query, state, card_id)
+        await _show_transactions(query, state)
 
     else:
         await query.answer("❌ Неизвестное действие", show_alert=True)
 
 
-async def _show_transactions(query: CallbackQuery, state: FSMContext, card_id):
-    """Загружает и выводит последние транзакции по карте."""
+async def _show_transactions(query: CallbackQuery, state: FSMContext):
+    """Загружает транзакции команды и выводит последние по выбранной карте.
+
+    teams/cards_transactions не принимает card_id, поэтому фильтруем результат
+    по номеру выбранной карты (по последним 4 цифрам) на стороне бота.
+    """
+    data = await state.get_data()
+    card_number = data.get("card_number")
+
     await delete_last_messages(query.from_user.id, query.message.bot)
     progress = await query.message.answer("🔄 Загружаю транзакции...")
 
-    result = await get_card_transactions(card_id, TRANSACTIONS_TIME)
+    result = await get_team_transactions(TRANSACTIONS_TIME)
 
     try:
         await progress.delete()
@@ -230,30 +248,38 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext, card_id):
 
     if result.get("error") or result.get("success") is False:
         await query.message.answer(
-            "❌ Не удалось получить транзакции AdsCard. Попробуйте позже.",
+            "❌ Не удалось получить транзакции AdsCard. Попробуйте позже." + _error_detail(result),
             reply_markup=menu_kb,
         )
         await state.clear()
         return
 
-    data = result.get("data", {})
-    transactions = list(data.values()) if isinstance(data, dict) else (data or [])
+    data_field = result.get("data", {})
+    transactions = list(data_field.values()) if isinstance(data_field, dict) else (data_field or [])
+
+    # Фильтр по выбранной карте: совпадение последних 4 цифр номера
+    card_last4 = card_digits(card_number)[-4:]
+    if card_last4:
+        transactions = [
+            tx for tx in transactions
+            if card_digits(tx.get("card_number")) and card_digits(tx.get("card_number"))[-4:] == card_last4
+        ]
 
     if not transactions:
-        await query.message.answer("📭 Транзакций за период не найдено.", reply_markup=menu_kb)
+        await query.message.answer("📭 Транзакций по карте за период не найдено.", reply_markup=menu_kb)
         await state.clear()
         return
 
     lines = ["📜 <b>Последние транзакции</b>\n"]
     for i, tx in enumerate(transactions[:MAX_TRANSACTIONS], 1):
         date = tx.get("date", "—")
-        tx_type = tx.get("type", "—")
+        status = tx.get("status", "—")
         amount = tx.get("amount", "—")
         currency = str(tx.get("currency", "")).upper()
         merchant = tx.get("merchant") or "—"
         lines.append(
             f"<b>#{i}</b> {date}\n"
-            f"   {tx_type} — <b>{amount}</b> {currency}\n"
+            f"   {status} — <b>{amount}</b> {currency}\n"
             f"   🏬 {merchant}"
         )
 
@@ -299,7 +325,7 @@ async def card_limit_entered(message: Message, state: FSMContext):
 
     if result.get("error") or result.get("success") is False:
         await message.answer(
-            "❌ Не удалось изменить лимит. Попробуйте позже.",
+            "❌ Не удалось изменить лимит. Попробуйте позже." + _error_detail(result),
             reply_markup=menu_kb,
         )
     else:
@@ -347,7 +373,7 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
 
     if result.get("error") or result.get("success") is False:
         await query.message.answer(
-            "❌ Не удалось заблокировать карту. Попробуйте позже.",
+            "❌ Не удалось заблокировать карту. Попробуйте позже." + _error_detail(result),
             reply_markup=menu_kb,
         )
     else:

@@ -13,8 +13,9 @@
 import json
 import logging
 import aiohttp
+import bugsnag
 
-from config import ADSCARD_TOKEN, ADSCARD_AUTH_TOKEN
+from config import ADSCARD_TOKEN, ADSCARD_AUTH_TOKEN, BUGSNAG_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,21 @@ ADSCARD_API_BASE = "https://talkv2.adscard.net/v3"
 
 # Тайм-аут на запрос (сек)
 _REQUEST_TIMEOUT = 30
+
+
+def _report(error, endpoint: str, **meta) -> None:
+    """Логирует ошибку и отправляет её в Bugsnag (если настроен).
+
+    error может быть как Exception, так и строкой с описанием.
+    """
+    logger.error("[adscard] %s -> %s | %s", endpoint, error, meta)
+    if not BUGSNAG_TOKEN:
+        return
+    exc = error if isinstance(error, Exception) else Exception(str(error))
+    try:
+        bugsnag.notify(exc, meta_data={"adscard": {"endpoint": endpoint, **meta}})
+    except Exception as e:  # на всякий случай не роняем поток из-за репортинга
+        logger.error("[adscard] bugsnag.notify failed: %s", e)
 
 
 async def _post(endpoint: str, payload: dict | None = None) -> dict:
@@ -32,9 +48,9 @@ async def _post(endpoint: str, payload: dict | None = None) -> dict:
     вызывающий код проверяет наличие "error".
     """
     if not ADSCARD_TOKEN or not ADSCARD_AUTH_TOKEN:
-        logger.error("[adscard] ADSCARD_TOKEN / ADSCARD_AUTH_TOKEN не заданы в окружении")
+        _report("ADSCARD_TOKEN / ADSCARD_AUTH_TOKEN не заданы в окружении", endpoint)
         return {"success": False, "error": "config_missing",
-                "details": "AdsCard токены не настроены"}
+                "details": "Токены AdsCard не настроены в .env"}
 
     url = f"{ADSCARD_API_BASE}/{endpoint}"
     headers = {
@@ -53,21 +69,23 @@ async def _post(endpoint: str, payload: dict | None = None) -> dict:
                 text = await resp.text()
 
                 if status != 200:
-                    logger.error("[adscard] %s -> HTTP %s: %s", endpoint, status, text[:500])
+                    snippet = text[:300]
+                    _report(f"HTTP {status}: {snippet}", endpoint, status=status)
                     return {"success": False, "error": f"http_{status}",
-                            "details": "Ошибка ответа сервера AdsCard"}
+                            "details": f"HTTP {status}: {snippet}"}
 
                 try:
                     return json.loads(text)
                 except ValueError:
-                    logger.error("[adscard] %s -> не удалось распарсить JSON: %s", endpoint, text[:500])
+                    snippet = text[:300]
+                    _report(f"невалидный JSON: {snippet}", endpoint)
                     return {"success": False, "error": "bad_json",
-                            "details": "Некорректный ответ сервера AdsCard"}
+                            "details": f"Некорректный ответ AdsCard: {snippet}"}
     except aiohttp.ClientError as e:
-        logger.error("[adscard] %s -> сетевая ошибка: %s", endpoint, e)
+        _report(e, endpoint, kind="network_error")
         return {"success": False, "error": "network_error", "details": str(e)}
     except Exception as e:  # таймаут и прочее
-        logger.error("[adscard] %s -> непредвиденная ошибка: %s", endpoint, e)
+        _report(e, endpoint, kind="unexpected")
         return {"success": False, "error": "unexpected", "details": str(e)}
 
 
@@ -76,21 +94,31 @@ def _has_error(result: dict) -> bool:
     return bool(result.get("error")) or result.get("success") is False
 
 
-async def get_cards() -> dict:
-    """Получает список карт пользователя (cards/list)."""
-    return await _post("cards/list")
+def card_digits(value) -> str:
+    """Возвращает только цифры из номера карты (из строки или поля number карты)."""
+    if isinstance(value, dict):
+        value = value.get("number", "")
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+async def get_team_cards() -> dict:
+    """Получает список карт команды (teams/cards_list).
+
+    Без user_id возвращает карты по всей команде.
+    """
+    return await _post("teams/cards_list")
 
 
 async def find_card_by_number(number: str) -> dict | None:
-    """Ищет карту по введённому полному номеру в списке cards/list.
+    """Ищет карту по введённому полному номеру в списке teams/cards_list.
 
     Пользователь вводит полный номер карты. Сначала пытаемся найти точное
-    совпадение цифр. Если в cards/list номера приходят маскированными и точного
-    совпадения нет — фолбэк по последним 4 цифрам. Возвращает словарь:
+    совпадение цифр. Если номера в списке маскированы и точного совпадения нет —
+    фолбэк по последним 4 цифрам. Возвращает словарь:
     {"card": <карта>, "multiple": bool} при успехе,
     {"error": ...} при ошибке API, либо None если карта не найдена.
     """
-    result = await get_cards()
+    result = await get_team_cards()
     if _has_error(result):
         return {"error": result.get("error"), "details": result.get("details")}
 
@@ -98,12 +126,9 @@ async def find_card_by_number(number: str) -> dict | None:
     # data приходит как объект {"0": {...}, "1": {...}}
     cards = list(data.values()) if isinstance(data, dict) else (data or [])
 
-    needle = "".join(ch for ch in str(number) if ch.isdigit())
+    needle = card_digits(number)
     if not needle:
         return None
-
-    def card_digits(card) -> str:
-        return "".join(ch for ch in str(card.get("number", "")) if ch.isdigit())
 
     # 1) Точное совпадение полного номера
     exact = [c for c in cards if card_digits(c) and card_digits(c) == needle]
@@ -121,15 +146,22 @@ async def find_card_by_number(number: str) -> dict | None:
 
 
 async def set_card_limit(card_id, limit) -> dict:
-    """Устанавливает новый абсолютный лимит карты (cards/limit)."""
+    """Устанавливает новый абсолютный лимит карты (cards/limit).
+
+    В teams/* нет эндпоинта смены лимита, поэтому используем общий cards/limit.
+    """
     return await _post("cards/limit", {"cards_id": [card_id], "limit": limit})
 
 
 async def block_card(card_id) -> dict:
-    """Блокирует карту (cards/block)."""
-    return await _post("cards/block", {"cards_id": [card_id]})
+    """Блокирует карту команды (teams/cards_block)."""
+    return await _post("teams/cards_block", {"cards_id": [card_id]})
 
 
-async def get_card_transactions(card_id, time: str = "month") -> dict:
-    """Получает транзакции по карте (cards/transactions). time обязателен."""
-    return await _post("cards/transactions", {"time": time, "card_id": card_id})
+async def get_team_transactions(time: str = "month") -> dict:
+    """Получает транзакции по картам команды (teams/cards_transactions).
+
+    Эндпоинт не принимает card_id и отдаёт транзакции всей команды за период;
+    фильтрация по конкретной карте делается на стороне бота. time обязателен.
+    """
+    return await _post("teams/cards_transactions", {"time": time})
