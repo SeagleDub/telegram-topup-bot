@@ -78,6 +78,24 @@ def mask_card_number(number) -> str:
     return f"**** **** **** {digits[-4:]}"
 
 
+async def _show_action_menu(target, user_id: int, state: FSMContext, card_number) -> None:
+    """Показывает меню действий по выбранной карте и возвращает в состояние выбора.
+
+    target — объект с методом .answer (Message или query.message). Карта
+    (card_id/card_number) остаётся в state, чтобы можно было выполнить ещё
+    одно действие без повторного поиска.
+    """
+    masked = mask_card_number(card_number)
+    m1 = await target.answer(
+        f"💳 Карта <code>{masked}</code>\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_card_action_keyboard(),
+    )
+    m2 = await target.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    last_messages[user_id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.card_actions_choose_action)
+
+
 def format_card_summary(card: dict) -> str:
     """Формирует краткую карточку для показа пользователю (без чувствительных данных)."""
     status = CARD_STATUS_LABELS.get(str(card.get("status")), str(card.get("status", "—")))
@@ -260,14 +278,11 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    menu_kb = get_menu_keyboard(query.from_user.id)
-
     if result.get("error") or result.get("success") is False:
         await query.message.answer(
             "❌ Не удалось получить транзакции AdsCard. Попробуйте позже." + _error_detail(result),
-            reply_markup=menu_kb,
         )
-        await state.clear()
+        await _show_action_menu(query.message, query.from_user.id, state, card_number)
         return
 
     data_field = result.get("data", {})
@@ -282,8 +297,8 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext):
         ]
 
     if not transactions:
-        await query.message.answer("📭 Транзакций по карте за период не найдено.", reply_markup=menu_kb)
-        await state.clear()
+        await query.message.answer("📭 Транзакций по карте за период не найдено.")
+        await _show_action_menu(query.message, query.from_user.id, state, card_number)
         return
 
     lines = ["📜 <b>Последние транзакции</b>\n"]
@@ -299,8 +314,8 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext):
             f"   🏬 {merchant}"
         )
 
-    await query.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=menu_kb)
-    await state.clear()
+    await query.message.answer("\n".join(lines), parse_mode="HTML")
+    await _show_action_menu(query.message, query.from_user.id, state, card_number)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +357,6 @@ async def card_limit_entered(message: Message, state: FSMContext):
     if result.get("error") or result.get("success") is False:
         await message.answer(
             "❌ Не удалось изменить лимит. Попробуйте позже." + _error_detail(result),
-            reply_markup=menu_kb,
         )
     else:
         # Берём фактический лимит из ответа API (data: {"0": {...}}), иначе — введённый
@@ -354,10 +368,9 @@ async def card_limit_entered(message: Message, state: FSMContext):
             f"✅ Лимит карты <code>{mask_card_number(data.get('card_number'))}</code> "
             f"изменён на <b>{applied}</b>.",
             parse_mode="HTML",
-            reply_markup=menu_kb,
         )
 
-    await state.clear()
+    await _show_action_menu(message, message.from_user.id, state, data.get("card_number"))
 
 
 # ---------------------------------------------------------------------------
@@ -374,14 +387,17 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     await query.answer()
     await delete_last_messages(query.from_user.id, query.message.bot)
 
-    if choice != "yes":
-        await query.message.answer("Блокировка отменена.", reply_markup=menu_kb)
-        await state.clear()
-        return
-
     if card_id is None:
         await query.message.answer("❌ Карта не выбрана. Начните заново.", reply_markup=menu_kb)
         await state.clear()
+        return
+
+    card_number = data.get("card_number")
+    masked = mask_card_number(card_number)
+
+    if choice != "yes":
+        await query.message.answer("Блокировка отменена.")
+        await _show_action_menu(query.message, query.from_user.id, state, card_number)
         return
 
     progress = await query.message.answer("🔄 Блокирую карту...")
@@ -392,12 +408,9 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     except Exception:
         pass
 
-    masked = mask_card_number(data.get("card_number"))
-
     if result.get("error") or result.get("success") is False:
         await query.message.answer(
             "❌ Не удалось заблокировать карту. Попробуйте позже." + _error_detail(result),
-            reply_markup=menu_kb,
         )
     else:
         # Подтверждаем блокировку по ответу: closed_at заполнен или status == "D".
@@ -408,13 +421,11 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
                 f"⚠️ Запрос отправлен, но карта <code>{masked}</code> не выглядит "
                 f"заблокированной (статус: {card.get('status')}). Проверьте вручную.",
                 parse_mode="HTML",
-                reply_markup=menu_kb,
             )
         else:
             await query.message.answer(
                 f"✅ Карта <code>{masked}</code> заблокирована.",
                 parse_mode="HTML",
-                reply_markup=menu_kb,
             )
 
-    await state.clear()
+    await _show_action_menu(query.message, query.from_user.id, state, card_number)
