@@ -98,61 +98,74 @@ def get_card_number(bank: str, card: dict):
     return card.get("number") if bank == "adscard" else card.get("cardNumber")
 
 
-def _fmt(value):
-    """Значение для вывода: None/пусто -> '—'."""
-    return value if value not in (None, "") else "—"
+def _has(value) -> bool:
+    """Есть ли осмысленное значение (не None и не пустая строка). 0 — есть."""
+    return value not in (None, "")
+
+
+def _is_zeroish(value) -> bool:
+    """True, если значение численно равно нулю (в т.ч. '0.00')."""
+    try:
+        return float(str(value)) == 0
+    except (TypeError, ValueError):
+        return False
 
 
 def format_card_summary(bank: str, card: dict) -> str:
-    """Карточка для показа (без чувствительных данных — без CVC/полного номера)."""
-    status_raw = str(card.get("status"))
-    status = STATUS_LABELS.get(bank, {}).get(status_raw, status_raw)
-    currency = str(card.get("currency", "")).upper()
-    masked = mask_card_number(get_card_number(bank, card))
+    """Карточка для показа. Поля без значения (None/пусто) пропускаются.
 
-    lines = [
-        "💳 <b>Карта найдена</b>",
-        f"Банк: {BANK_LABELS.get(bank, bank)}",
-        f"Номер: <code>{masked}</code>",
-        f"Статус: {status}",
-    ]
+    Чувствительные данные (CVC, полный номер) не выводятся.
+    """
+    currency = str(card.get("currency", "")).upper()
+    cur = f" {currency}" if currency else ""
+    lines = ["💳 <b>Карта найдена</b>", f"Банк: {BANK_LABELS.get(bank, bank)}"]
+
+    lines.append(f"Номер: <code>{mask_card_number(get_card_number(bank, card))}</code>")
+
+    status_raw = card.get("status")
+    if _has(status_raw):
+        lines.append(f"Статус: {STATUS_LABELS.get(bank, {}).get(str(status_raw), status_raw)}")
+
+    def money(label, value, suffix=cur):
+        if _has(value):
+            lines.append(f"{label}: <b>{value}</b>{suffix}")
+
+    def text(label, value):
+        if _has(value):
+            lines.append(f"{label}: {value}")
 
     if bank == "adscard":
         limit_type = {"day": " (дневной)", "month": " (месячный)"}.get(str(card.get("limit_type")), "")
-        lines.append(f"Лимит: <b>{_fmt(card.get('limit'))}</b> {currency}{limit_type}")
-        lines.append(f"Баланс: <b>{_fmt(card.get('balance'))}</b> {currency}")
-        lines.append(f"Потрачено: <b>{_fmt(card.get('expense'))}</b> {currency}")
-        if card.get("bank_limit") is not None:
-            lines.append(f"Банковский лимит: {card.get('bank_limit')} {currency}")
-        if card.get("date_expired"):
-            lines.append(f"Действует до: {card.get('date_expired')}")
-        if card.get("card_user_email"):
-            lines.append(f"Владелец: {card.get('card_user_email')}")
-        if card.get("comment"):
-            lines.append(f"Комментарий: {card.get('comment')}")
+        money("Лимит", card.get("limit"), cur + limit_type)
+        money("Баланс", card.get("balance"))
+        money("Потрачено", card.get("expense"))
+        money("Банковский лимит", card.get("bank_limit"))
+        text("Действует до", card.get("date_expired"))
+        text("Владелец", card.get("card_user_email"))
+        text("Комментарий", card.get("comment"))
     else:
-        lines.append(f"Глобальный лимит: <b>{_fmt(card.get('limitAmount'))}</b> {currency}")
-        lines.append(f"Дневной лимит: <b>{_fmt(card.get('dailyLimitAmount'))}</b> {currency}")
-        lines.append(f"Баланс: <b>{_fmt(card.get('balanceAmount'))}</b> {currency}")
-        lines.append(f"Потрачено всего: <b>{_fmt(card.get('spendAmount'))}</b> {currency}")
-        lines.append(f"Потрачено за день: <b>{_fmt(card.get('dailySpendAmount'))}</b> {currency}")
-        if card.get("refundAmount") is not None:
-            lines.append(f"Возвраты: {card.get('refundAmount')} {currency}")
+        money("Глобальный лимит", card.get("limitAmount"))
+        money("Дневной лимит", card.get("dailyLimitAmount"))
+        money("Баланс", card.get("balanceAmount"))
+        money("Потрачено всего", card.get("spendAmount"))
+        money("Потрачено за день", card.get("dailySpendAmount"))
+        money("Возвраты", card.get("refundAmount"))
+        if not _is_zeroish(card.get("overdraftAmount")):
+            money("Овердрафт", card.get("overdraftAmount"))
         exp_m, exp_y = card.get("cardExpiryMonth"), card.get("cardExpiryYear")
-        if exp_m and exp_y:
+        if _has(exp_m) and _has(exp_y):
             lines.append(f"Действует до: {int(exp_m):02d}/{exp_y}")
         if card.get("autoRefillEnabled"):
             thr, amt = card.get("autoRefillThreshold"), card.get("autoRefillAmount")
-            extra = f" (при ≤ {thr} пополнять на {amt})" if thr is not None and amt is not None else ""
+            extra = f" (при ≤ {thr} пополнять на {amt})" if _has(thr) and _has(amt) else ""
             lines.append(f"Автопополнение: вкл{extra}")
         group = card.get("cardGroup") or {}
-        if isinstance(group, dict) and group.get("name"):
-            lines.append(f"Группа: {group.get('name')}")
+        if isinstance(group, dict):
+            text("Группа", group.get("name"))
         owner = card.get("owner") or {}
-        if isinstance(owner, dict) and owner.get("email"):
-            lines.append(f"Владелец: {owner.get('email')}")
-        if card.get("note"):
-            lines.append(f"Заметка: {card.get('note')}")
+        if isinstance(owner, dict):
+            text("Владелец", owner.get("email"))
+        text("Заметка", card.get("note"))
     return "\n".join(lines)
 
 
@@ -384,21 +397,58 @@ def _tx_matches(bank: str, tx: dict, card_id, card_number) -> bool:
     return bool(last4) and bool(tx_digits) and tx_digits[-4:] == last4
 
 
+def _pretty_dt(value) -> str:
+    """ISO 8601 -> 'YYYY-MM-DD HH:MM' (для MultiCards); иначе как есть."""
+    s = str(value or "")
+    if "T" in s:
+        return s[:16].replace("T", " ")
+    return s
+
+
 def _format_transaction(bank: str, i: int, tx: dict) -> str:
+    """Подробная строка транзакции; пустые/нулевые поля пропускаются."""
     currency = str(tx.get("currency", "")).upper()
-    amount = tx.get("amount", "—")
-    tx_type = tx.get("type") or tx.get("status") or "—"
+    cur = f" {currency}" if currency else ""
+    amount = tx.get("amount")
+
     if bank == "adscard":
-        date = tx.get("date", "—")
-        merchant = tx.get("merchant") or "—"
+        date = tx.get("date", "")
+        tx_type = tx.get("type") or "—"
+        head = tx_type
+        merchant = tx.get("merchant")
+        fee = tx.get("fee")
+        balance = tx.get("userbalance")
+        note = tx.get("card_comment")
     else:
-        date = tx.get("createdAt", "—")
-        merchant = tx.get("description") or "—"
-    return (
-        f"<b>#{i}</b> {date}\n"
-        f"   {tx_type} — <b>{amount}</b> {currency}\n"
-        f"   🏬 {merchant}"
-    )
+        date = _pretty_dt(tx.get("createdAt"))
+        tx_type = tx.get("type") or "—"
+        status = tx.get("status")
+        head = f"{tx_type} · {status}" if _has(status) else tx_type
+        merchant = tx.get("description")
+        # У MultiCards комиссия = процент + фиксированная
+        fee_parts = []
+        if not _is_zeroish(tx.get("transactionFee")):
+            fee_parts.append(f"{tx.get('transactionFee')}%")
+        if not _is_zeroish(tx.get("transactionFixedFee")):
+            fee_parts.append(f"{tx.get('transactionFixedFee')}{cur}")
+        fee = " + ".join(fee_parts) if fee_parts else None
+        balance = None
+        note = tx.get("cardNote")
+
+    lines = [f"<b>#{i}</b> {date}".rstrip()]
+    lines.append(f"   {head} — <b>{amount if _has(amount) else '—'}</b>{cur}")
+    if bank == "adscard":
+        if _has(fee) and not _is_zeroish(fee):
+            lines.append(f"   Комиссия: {fee}{cur}")
+    elif _has(fee):
+        lines.append(f"   Комиссия: {fee}")
+    if _has(merchant):
+        lines.append(f"   🏬 {merchant}")
+    if _has(note):
+        lines.append(f"   📝 {note}")
+    if _has(balance):
+        lines.append(f"   Баланс после: {balance}{cur}")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
