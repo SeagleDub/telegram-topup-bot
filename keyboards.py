@@ -5,17 +5,18 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from config import ADMIN_ID, TEAMLEADER_ID
 
 # Основные клавиатуры
+# Часть пунктов временно скрыта (закомментирована) — обработчики остаются рабочими.
 menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
-    [KeyboardButton(text="📱 Получить SMS Google Ads")],
-    [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
+    # [KeyboardButton(text="📱 Получить SMS Google Ads")],  # временно скрыто
+    # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
     [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    [KeyboardButton(text="📊 Добавить пиксель в систему")],
-    [KeyboardButton(text="🌍 Перевод лендинга")]
+    # [KeyboardButton(text="📊 Добавить пиксель в систему")],  # временно скрыто
+    # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
 menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -24,17 +25,26 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу")],
     [KeyboardButton(text="📊 Получить расход по байеру")],
-    [KeyboardButton(text="📱 Получить SMS Google Ads")],
-    [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],
-    [KeyboardButton(text="🔄 Автопродление номеров")],
+    # [KeyboardButton(text="📱 Получить SMS Google Ads")],  # временно скрыто
+    # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
+    # [KeyboardButton(text="🔄 Автопродление номеров")],  # временно скрыто
     [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    [KeyboardButton(text="📊 Добавить пиксель в систему")],
-    [KeyboardButton(text="🌍 Перевод лендинга")]
+    # [KeyboardButton(text="📊 Добавить пиксель в систему")],  # временно скрыто
+    # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
 cancel_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, keyboard=[
+    [KeyboardButton(text="❌ Отмена")]
+])
+
+# Текст кнопки "другая карта" (используется в фильтре хендлера)
+ANOTHER_CARD_TEXT = "🔄 Другая карта"
+
+# Клавиатура внутри флоу "Действия с картами": отмена + переход к выбору банка
+card_flow_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+    [KeyboardButton(text=ANOTHER_CARD_TEXT)],
     [KeyboardButton(text="❌ Отмена")]
 ])
 

@@ -13,16 +13,27 @@
 import logging
 
 from aiogram import Router, F
+from aiogram.filters import StateFilter
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import (
-    cancel_kb,
+    card_flow_kb,
+    ANOTHER_CARD_TEXT,
     get_menu_keyboard,
     get_card_bank_keyboard,
     get_card_action_keyboard,
     get_card_block_confirm_keyboard,
+)
+
+# Все состояния флоу "Действия с картами" (для StateFilter)
+CARD_STATES = (
+    Form.card_actions_choose_bank,
+    Form.card_actions_enter_number,
+    Form.card_actions_choose_action,
+    Form.card_actions_enter_limit,
+    Form.card_actions_confirm_block,
 )
 from utils import last_messages, delete_last_messages
 import services.adscard as adscard
@@ -186,7 +197,7 @@ async def _show_action_menu(target, user_id: int, state: FSMContext, bank: str, 
         parse_mode="HTML",
         reply_markup=get_card_action_keyboard(bank),
     )
-    m2 = await target.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    m2 = await target.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=card_flow_kb)
     last_messages[user_id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.card_actions_choose_action)
 
@@ -202,7 +213,7 @@ async def start_card_actions(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=get_card_bank_keyboard(),
     )
-    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=card_flow_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.card_actions_choose_bank)
 
@@ -210,6 +221,25 @@ async def start_card_actions(message: Message, state: FSMContext):
 # --------------------------------------------------------------------------- #
 # Шаг 2. Выбор банка
 # --------------------------------------------------------------------------- #
+@router.message(StateFilter(*CARD_STATES), F.text == ANOTHER_CARD_TEXT)
+async def card_actions_another(message: Message, state: FSMContext):
+    """Кнопка «Другая карта» — сбрасывает выбранную карту и возвращает к выбору банка.
+
+    Зарегистрирован раньше обработчиков ввода (номер/лимит), чтобы текст кнопки
+    не воспринимался как ввод. Фильтр по состояниям флоу — чтобы не срабатывать вне него.
+    """
+    await delete_last_messages(message.from_user.id, message.bot)
+    await state.set_data({})  # очищаем bank/card_id/card_number
+    m1 = await message.answer(
+        "💳 <b>Действия с картами</b>\n\nВыберите банк:",
+        parse_mode="HTML",
+        reply_markup=get_card_bank_keyboard(),
+    )
+    m2 = await message.answer("❌ Отмена  /  🔄 Другая карта", reply_markup=card_flow_kb)
+    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.card_actions_choose_bank)
+
+
 @router.callback_query(F.data.startswith("card_bank:"), Form.card_actions_choose_bank)
 async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор банка."""
@@ -225,7 +255,7 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     m1 = await query.message.answer(
         f"🏦 <b>{BANK_LABELS[bank]}</b>\n\nВведите полный номер карты:",
         parse_mode="HTML",
-        reply_markup=cancel_kb,
+        reply_markup=card_flow_kb,
     )
     last_messages[query.from_user.id] = [m1.message_id]
     await state.set_state(Form.card_actions_enter_number)
@@ -240,7 +270,7 @@ async def card_number_entered(message: Message, state: FSMContext):
     # "❌ Отмена" перехватывается глобальным обработчиком в common.py
     number = message.text.strip()
     if not any(ch.isdigit() for ch in number):
-        await message.answer("❌ Введите номер карты (цифры).", reply_markup=cancel_kb)
+        await message.answer("❌ Введите номер карты (цифры).", reply_markup=card_flow_kb)
         return
 
     data = await state.get_data()
@@ -258,14 +288,14 @@ async def card_number_entered(message: Message, state: FSMContext):
         await message.answer(
             f"❌ Не удалось получить список карт {BANK_LABELS.get(bank, bank)}. "
             "Попробуйте позже.",
-            reply_markup=cancel_kb,
+            reply_markup=card_flow_kb,
         )
         return
 
     if not result:
         await message.answer(
             "❌ Карта с таким номером не найдена. Проверьте номер и попробуйте снова.",
-            reply_markup=cancel_kb,
+            reply_markup=card_flow_kb,
         )
         return
 
@@ -278,7 +308,7 @@ async def card_number_entered(message: Message, state: FSMContext):
         text += "\n\n⚠️ Найдено несколько карт, показана первая."
 
     m1 = await message.answer(text, parse_mode="HTML", reply_markup=get_card_action_keyboard(bank))
-    m2 = await message.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)
+    m2 = await message.answer("❌ Нажмите 'Отмена', чтобы выйти", reply_markup=card_flow_kb)
     last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
     await state.set_state(Form.card_actions_choose_action)
 
@@ -308,7 +338,7 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
         await state.update_data(limit_kind=kind)
         await query.answer()
         await delete_last_messages(query.from_user.id, query.message.bot)
-        m1 = await query.message.answer(LIMIT_PROMPTS[kind], reply_markup=cancel_kb)
+        m1 = await query.message.answer(LIMIT_PROMPTS[kind], reply_markup=card_flow_kb)
         last_messages[query.from_user.id] = [m1.message_id]
         await state.set_state(Form.card_actions_enter_limit)
 
@@ -477,7 +507,7 @@ async def card_limit_entered(message: Message, state: FSMContext):
             raise ValueError()
     except ValueError:
         limit_hint = f" (от {low} до {high})" if high is not None else f" (≥ {low})"
-        await message.answer(f"❌ Введите корректное число{limit_hint}.", reply_markup=cancel_kb)
+        await message.answer(f"❌ Введите корректное число{limit_hint}.", reply_markup=card_flow_kb)
         return
 
     limit = int(value) if value.is_integer() else value
