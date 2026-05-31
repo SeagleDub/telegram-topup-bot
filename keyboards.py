@@ -15,7 +15,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    # [KeyboardButton(text="📊 Добавить пиксель в систему")],  # временно скрыто
+    [KeyboardButton(text="📊 Добавить пиксель в систему")],
     # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
@@ -31,7 +31,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💳 Действия с картами")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
-    # [KeyboardButton(text="📊 Добавить пиксель в систему")],  # временно скрыто
+    [KeyboardButton(text="📊 Добавить пиксель в систему")],
     # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
