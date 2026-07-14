@@ -26,7 +26,8 @@ from handlers import (
     google_sms,
     purchase_numbers,
     auto_renewal,
-    card_actions
+    card_actions,
+    card_group_expenses
 )
 
 async def main():
@@ -50,6 +51,7 @@ async def main():
     dp.include_router(purchase_numbers.router)
     dp.include_router(auto_renewal.router)
     dp.include_router(card_actions.router)
+    dp.include_router(card_group_expenses.router)
 
     # Удаляем вебхук и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)

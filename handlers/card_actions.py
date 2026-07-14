@@ -38,6 +38,7 @@ CARD_STATES = (
 from utils import last_messages, delete_last_messages
 import services.adscard as adscard
 import services.multicards as multicards
+import services.ecards as ecards
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,14 @@ router = Router()
 MAX_TRANSACTIONS = 10
 ADSCARD_TRANSACTIONS_TIME = "month"
 
-BANK_LABELS = {"adscard": "AdsCard", "multicards": "MultiCards"}
+BANK_LABELS = {"adscard": "AdsCard", "multicards": "MultiCards", "ecards": "eCards"}
 
-# Метки статусов карт по банкам
+# Метки статусов карт по банкам (у eCards имена статусов из API.md неизвестны —
+# показываем как есть).
 STATUS_LABELS = {
     "adscard": {"A": "🟢 Активна", "D": "🔴 Заблокирована"},
     "multicards": {"ACTIVE": "🟢 Активна", "FROZEN": "🔵 Заморожена", "CLOSED": "🔴 Закрыта"},
+    "ecards": {},
 }
 
 # Диапазоны лимитов для валидации ввода (kind -> (min, max|None))
@@ -100,12 +103,16 @@ def _first_card(result: dict) -> dict | None:
 
 
 def get_card_id(bank: str, card: dict):
-    """ID карты (у обоих банков поле id)."""
+    """ID карты (adscard/multicards: id; ecards: толерантно)."""
+    if bank == "ecards":
+        return ecards.card_id(card)
     return card.get("id")
 
 
 def get_card_number(bank: str, card: dict):
-    """Полный номер карты (adscard: number, multicards: cardNumber)."""
+    """Полный номер карты (adscard: number, multicards/ecards: cardNumber)."""
+    if bank == "ecards":
+        return ecards.card_number(card)
     return card.get("number") if bank == "adscard" else card.get("cardNumber")
 
 
@@ -153,6 +160,24 @@ def format_card_summary(bank: str, card: dict) -> str:
         text("Действует до", card.get("date_expired"))
         text("Владелец", card.get("card_user_email"))
         text("Комментарий", card.get("comment"))
+    elif bank == "ecards":
+        # Поля из живого GET /card. Чувствительные (CVC, 3DS-пароль/OTP, token)
+        # НЕ выводим. Баланс лежит во вложенном account, группа — в groupsRelations.
+        money("Использовано", card.get("sharedBalanceUsed"))
+        acc = card.get("account") or {}
+        if isinstance(acc, dict):
+            money("Баланс аккаунта", acc.get("balance"))
+        text("Платёжная система", card.get("paymentSystem"))
+        text("Действует до", card.get("cardExpire"))
+        rels = card.get("groupsRelations") or []
+        if rels and isinstance(rels[0], dict):
+            grp = rels[0].get("cardGroup") or {}
+            if isinstance(grp, dict):
+                text("Группа", grp.get("name"))
+        holder = card.get("holder") or {}
+        if isinstance(holder, dict):
+            text("Владелец", holder.get("email"))
+        text("Заметка", card.get("note"))
     else:
         money("Глобальный лимит", card.get("limitAmount"))
         money("Дневной лимит", card.get("dailyLimitAmount"))
@@ -182,6 +207,8 @@ def format_card_summary(bank: str, card: dict) -> str:
 async def _find_card(bank: str, number: str):
     if bank == "adscard":
         return await adscard.find_card_by_number(number)
+    if bank == "ecards":
+        return await ecards.find_card_by_number(number)
     return await multicards.find_card_by_number(number)
 
 
@@ -372,6 +399,9 @@ async def _show_transactions(query: CallbackQuery, state: FSMContext, bank: str,
 
     if bank == "adscard":
         result = await adscard.get_team_transactions(ADSCARD_TRANSACTIONS_TIME)
+    elif bank == "ecards":
+        start, end = ecards.current_month_period()
+        result = await ecards.get_card_operations(start, end, card_ids=[card_id])
     else:
         start, end = multicards.current_month_period()
         result = await multicards.get_transactions(start, end)
@@ -409,12 +439,25 @@ def _extract_transactions(bank: str, result) -> list:
     if bank == "adscard":
         data = result.get("data", {})
         return list(data.values()) if isinstance(data, dict) else (data or [])
+    if bank == "ecards":
+        return ecards._as_list(result)
     items = result.get("items", []) if isinstance(result, dict) else []
     return items or []
 
 
 def _tx_matches(bank: str, tx: dict, card_id, card_number) -> bool:
     """Транзакция относится к выбранной карте — по id, иначе по последним 4 цифрам."""
+    if bank == "ecards":
+        # eCards уже фильтрует по filterCardId на стороне API, но сверимся.
+        # Карта во вложенном объекте операции (op.card.{id,cardNumber}).
+        if card_id is not None:
+            tx_id = ecards.op_card_id(tx)
+            if tx_id is not None:
+                return str(tx_id) == str(card_id)
+        last4 = _digits(card_number)[-4:]
+        tx_digits = _digits(ecards.op_card_number(tx))
+        return bool(last4) and bool(tx_digits) and tx_digits[-4:] == last4
+
     id_field = "card_id" if bank == "adscard" else "cardId"
     num_field = "card_number" if bank == "adscard" else "cardNumber"
 
@@ -440,7 +483,19 @@ def _format_transaction(bank: str, i: int, tx: dict) -> str:
     cur = f" {currency}" if currency else ""
     amount = tx.get("amount")
 
-    if bank == "adscard":
+    if bank == "ecards":
+        # Поля операции из живого /card-operation (сумма в value, валюта у карты).
+        currency = str(ecards.op_currency(tx) or "").upper()
+        cur = f" {currency}" if currency else ""
+        amount = ecards.op_value(tx)
+        date = _pretty_dt(ecards.op_date(tx))
+        tx_type = ecards.op_type(tx) or "—"
+        head = tx_type
+        merchant = ecards.op_merchant(tx)
+        fee = None
+        balance = None
+        note = None
+    elif bank == "adscard":
         date = tx.get("date", "")
         tx_type = tx.get("type") or "—"
         head = tx_type
@@ -585,6 +640,8 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     progress = await query.message.answer("🔄 Блокирую карту...")
     if bank == "adscard":
         result = await adscard.block_card(card_id)
+    elif bank == "ecards":
+        result = await ecards.block_card(card_id)
     else:
         result = await multicards.block_card(card_id)
 
@@ -622,6 +679,11 @@ def _block_confirmed(bank: str, result) -> bool:
         if card is None:
             return True
         return bool(card.get("closed_at") or str(card.get("status")) == "D")
+
+    if bank == "ecards":
+        # Форма ответа /card/close в API.md не описана; отсутствие ошибки уже
+        # проверено выше — считаем блокировку принятой.
+        return True
 
     if isinstance(result, dict) and result.get("status"):
         return str(result.get("status")) != "ACTIVE"

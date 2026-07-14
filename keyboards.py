@@ -13,6 +13,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="📱 Получить SMS Google Ads")],  # временно скрыто
     # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
     [KeyboardButton(text="💳 Действия с картами")],
+    [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -29,6 +30,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
     # [KeyboardButton(text="🔄 Автопродление номеров")],  # временно скрыто
     [KeyboardButton(text="💳 Действия с картами")],
+    [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
     [KeyboardButton(text="📊 Добавить пиксель в систему")],
@@ -133,7 +135,8 @@ def get_card_bank_keyboard():
     """Клавиатура выбора банка для действий с картами"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏦 AdsCard", callback_data="card_bank:adscard")],
-        [InlineKeyboardButton(text="🃏 MultiCards", callback_data="card_bank:multicards")]
+        [InlineKeyboardButton(text="🃏 MultiCards", callback_data="card_bank:multicards")],
+        [InlineKeyboardButton(text="🏦 eCards", callback_data="card_bank:ecards")]
     ])
 
 
@@ -141,12 +144,15 @@ def get_card_action_keyboard(bank: str = "adscard"):
     """Клавиатура выбора действия с картой (зависит от банка).
 
     У MultiCards лимит раздельный: глобальный и дневной. У AdsCard — один лимит.
+    У eCards смены лимита нет в API (см. API.md) — только блок и транзакции.
     """
     if bank == "multicards":
         limit_buttons = [
             [InlineKeyboardButton(text="💵 Глобальный лимит", callback_data="card_action:limit_total")],
             [InlineKeyboardButton(text="📅 Дневной лимит", callback_data="card_action:limit_daily")],
         ]
+    elif bank == "ecards":
+        limit_buttons = []
     else:
         limit_buttons = [
             [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
@@ -157,6 +163,8 @@ def get_card_action_keyboard(bank: str = "adscard"):
         [InlineKeyboardButton(text="🚫 Заблокировать", callback_data="card_action:block")],
         [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")]
     ])
+
+
 
 
 def get_card_block_confirm_keyboard():
