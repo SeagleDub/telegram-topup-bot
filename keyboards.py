@@ -167,6 +167,30 @@ def get_card_action_keyboard(bank: str = "adscard"):
 
 
 
+def get_tx_pagination_keyboard(page: int, pages: int):
+    """Стрелки навигации по страницам транзакций. None, если страница одна."""
+    if pages <= 1:
+        return None
+    row = []
+    if page > 0:
+        row.append(InlineKeyboardButton(text="◀️", callback_data=f"txpage:{page - 1}"))
+    row.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="txpage:noop"))
+    if page < pages - 1:
+        row.append(InlineKeyboardButton(text="▶️", callback_data=f"txpage:{page + 1}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+def get_period_keyboard():
+    """Выбор периода для расхода/транзакций: пресеты + свой диапазон."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Текущий месяц", callback_data="period:month")],
+        [InlineKeyboardButton(text="📆 Прошлый месяц", callback_data="period:prev")],
+        [InlineKeyboardButton(text="🗓 7 дней", callback_data="period:7"),
+         InlineKeyboardButton(text="🗓 30 дней", callback_data="period:30")],
+        [InlineKeyboardButton(text="✍️ Свой период", callback_data="period:custom")],
+    ])
+
+
 def get_ecards_group_keyboard():
     """Действия eCards по картам байера (технически по его группе, tg_id в названии).
 

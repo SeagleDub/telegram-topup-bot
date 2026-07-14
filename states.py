@@ -63,4 +63,7 @@ class Form(StatesGroup):
     card_actions_choose_action = State()
     card_actions_enter_limit = State()
     card_actions_confirm_block = State()
+    # Выбор периода для расхода/транзакций по группе (eCards)
+    card_actions_choose_period = State()
+    card_actions_enter_period = State()
 

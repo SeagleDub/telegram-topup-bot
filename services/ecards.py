@@ -23,7 +23,7 @@ JSON-массив, {items:[...]}, {data:[...]} или {data:{idx:{...}}} — н�
 import re
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import aiohttp
 import bugsnag
@@ -219,15 +219,64 @@ def op_merchant(op: dict):
     return op.get("merchantInfo") or op.get("description")
 
 
+def _iso(dt: datetime) -> str:
+    """datetime → ISO 8601 UTC с миллисекундами и суффиксом Z."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _day_start(dt: datetime) -> datetime:
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _day_end(dt: datetime) -> datetime:
+    return dt.replace(hour=23, minute=59, second=59, microsecond=999000)
+
+
 def current_month_period() -> tuple[str, str]:
-    """(начало текущего календарного месяца, сейчас) в ISO 8601 UTC (суффикс Z)."""
+    """(начало текущего календарного месяца, сейчас) в ISO 8601 UTC."""
     now = datetime.now(timezone.utc)
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return _iso(_day_start(now).replace(day=1)), _iso(now)
 
-    def iso(dt: datetime) -> str:
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
-    return iso(start), iso(now)
+def prev_month_period() -> tuple[str, str]:
+    """(начало, конец предыдущего календарного месяца) в ISO 8601 UTC."""
+    now = datetime.now(timezone.utc)
+    first_this = _day_start(now).replace(day=1)
+    end_prev = _day_end(first_this - timedelta(days=1))
+    start_prev = _day_start(end_prev).replace(day=1)
+    return _iso(start_prev), _iso(end_prev)
+
+
+def last_days_period(days: int) -> tuple[str, str]:
+    """(начало N дней назад, сейчас) в ISO 8601 UTC."""
+    now = datetime.now(timezone.utc)
+    return _iso(_day_start(now - timedelta(days=days))), _iso(now)
+
+
+def parse_period(text: str) -> tuple[str, str] | None:
+    """Парсит пользовательский период из двух дат через пробел/запятую.
+
+    Форматы дат: ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, ДД/ММ/ГГГГ. Начало — 00:00, конец —
+    23:59:59. Если даты перепутаны местами — меняем. None при ошибке.
+    """
+    parts = str(text or "").replace(",", " ").split()
+    if len(parts) != 2:
+        return None
+
+    def parse_one(s: str):
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
+
+    d1, d2 = parse_one(parts[0]), parse_one(parts[1])
+    if not d1 or not d2:
+        return None
+    if d2 < d1:
+        d1, d2 = d2, d1
+    return _iso(_day_start(d1)), _iso(_day_end(d2))
 
 
 # --------------------------------------------------------------------------- #

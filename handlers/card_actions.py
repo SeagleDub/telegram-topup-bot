@@ -26,7 +26,10 @@ from keyboards import (
     get_card_action_keyboard,
     get_card_block_confirm_keyboard,
     get_ecards_group_keyboard,
+    get_period_keyboard,
+    get_tx_pagination_keyboard,
 )
+import math
 
 # Все состояния флоу "Действия с картами" (для StateFilter)
 CARD_STATES = (
@@ -35,6 +38,8 @@ CARD_STATES = (
     Form.card_actions_choose_action,
     Form.card_actions_enter_limit,
     Form.card_actions_confirm_block,
+    Form.card_actions_choose_period,
+    Form.card_actions_enter_period,
 )
 from utils import last_messages, delete_last_messages
 import services.adscard as adscard
@@ -48,10 +53,10 @@ router = Router()
 MAX_TRANSACTIONS = 10
 ADSCARD_TRANSACTIONS_TIME = "month"
 
-# Сколько последних операций по группе показывать (API отдаёт до 100/страницу;
-# бьём вывод на сообщения, т.к. лимит Telegram ~4096 символов).
+# Сколько последних операций по группе тянуть (API отдаёт до 100/страницу) и
+# сколько показывать на одной странице листалки (◀ ▶).
 ECARDS_GROUP_TX_LIMIT = 50
-ECARDS_TX_CHUNK = 20
+ECARDS_TX_PAGE = 5
 
 BANK_LABELS = {"adscard": "AdsCard", "multicards": "MultiCards", "ecards": "eCards"}
 
@@ -242,21 +247,37 @@ async def start_card_actions(message: Message, state: FSMContext):
 # --------------------------------------------------------------------------- #
 @router.message(StateFilter(*CARD_STATES), F.text == ANOTHER_CARD_TEXT)
 async def card_actions_another(message: Message, state: FSMContext):
-    """Кнопка «Другая карта» — сбрасывает выбранную карту и возвращает к выбору банка.
+    """Кнопка «Другая карта» — сбрасывает выбранную карту.
 
+    Банк сохраняется → сразу просим ввести номер другой карты (без повторного
+    выбора банка). Если банк ещё не выбран — возвращаем к выбору банка.
     Зарегистрирован раньше обработчиков ввода (номер/лимит), чтобы текст кнопки
     не воспринимался как ввод. Фильтр по состояниям флоу — чтобы не срабатывать вне него.
     """
+    data = await state.get_data()
+    bank = data.get("bank")
     await delete_last_messages(message.from_user.id, message.bot)
-    await state.set_data({})  # очищаем bank/card_id/card_number
+
+    if not bank:
+        m1 = await message.answer(
+            "💳 <b>Действия с картами</b>\n\nВыберите банк:",
+            parse_mode="HTML",
+            reply_markup=get_card_bank_keyboard(),
+        )
+        m2 = await message.answer("❌ Отмена  /  🔄 Другая карта", reply_markup=card_flow_kb)
+        last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
+        await state.set_state(Form.card_actions_choose_bank)
+        return
+
+    # Сохраняем банк, сбрасываем выбранную карту, сразу просим номер.
+    await state.set_data({"bank": bank})
     m1 = await message.answer(
-        "💳 <b>Действия с картами</b>\n\nВыберите банк:",
+        f"🏦 <b>{BANK_LABELS.get(bank, bank)}</b>\n\nВведите полный номер карты:",
         parse_mode="HTML",
-        reply_markup=get_card_bank_keyboard(),
+        reply_markup=card_flow_kb,
     )
-    m2 = await message.answer("❌ Отмена  /  🔄 Другая карта", reply_markup=card_flow_kb)
-    last_messages[message.from_user.id] = [m1.message_id, m2.message_id]
-    await state.set_state(Form.card_actions_choose_bank)
+    last_messages[message.from_user.id] = [m1.message_id]
+    await state.set_state(Form.card_actions_enter_number)
 
 
 @router.callback_query(F.data.startswith("card_bank:"), Form.card_actions_choose_bank)
@@ -298,6 +319,13 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
 # --------------------------------------------------------------------------- #
 # eCards: действия по картам байера (технически по его группе, tg_id в названии)
 # --------------------------------------------------------------------------- #
+async def _safe_delete(msg) -> None:
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
 async def _ecards_show_group_menu(target, user_id: int, state: FSMContext) -> None:
     """Пере-показывает меню действий eCards (расход/транзакции) + ввод номера."""
     m1 = await target.answer(
@@ -310,45 +338,41 @@ async def _ecards_show_group_menu(target, user_id: int, state: FSMContext) -> No
     await state.set_state(Form.card_actions_enter_number)
 
 
-async def _resolve_buyer_groups(query: CallbackQuery, state: FSMContext):
+async def _resolve_buyer_groups(target, user_id: int, state: FSMContext):
     """Группы байера по tg_id. При ошибке/пустоте сообщает и пере-показывает меню.
 
     Возвращает список пар (id, name) либо None (уже обработано).
     """
-    groups = await ecards.get_buyer_groups(query.from_user.id)
+    groups = await ecards.get_buyer_groups(user_id)
     if _is_error(groups):
-        await query.message.answer("❌ Не удалось получить список групп. Попробуйте позже.")
-        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        await target.answer("❌ Не удалось получить список групп. Попробуйте позже.")
+        await _ecards_show_group_menu(target, user_id, state)
         return None
 
     my_groups = [(ecards.group_id(g), ecards.group_name(g) or f"Группа {ecards.group_id(g)}")
                  for g in groups if ecards.group_id(g) is not None]
     if not my_groups:
-        await query.message.answer(
+        await target.answer(
             "📭 Для вас не найдено групп карт. Обратитесь к администратору "
             "(в названии группы должен быть ваш Telegram-ID)."
         )
-        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        await _ecards_show_group_menu(target, user_id, state)
         return None
     return my_groups
 
 
-@router.callback_query(F.data == "card_group:spend", Form.card_actions_enter_number)
-async def ecards_group_spend(query: CallbackQuery, state: FSMContext):
-    """Нетто-расход по картам байера за текущий месяц."""
-    await query.answer()
-    await delete_last_messages(query.from_user.id, query.message.bot)
-    progress = await query.message.answer("🔄 Считаю расход за текущий месяц...")
+def _fmt_period(start: str, end: str) -> str:
+    return f"{start[:10]} — {end[:10]}"
 
-    my_groups = await _resolve_buyer_groups(query, state)
+
+async def _run_group_spend(target, user_id: int, state: FSMContext, start: str, end: str) -> None:
+    """Считает и показывает нетто-расход по группам байера за период [start, end]."""
+    progress = await target.answer("🔄 Считаю расход...")
+    my_groups = await _resolve_buyer_groups(target, user_id, state)
     if my_groups is None:
-        try:
-            await progress.delete()
-        except Exception:
-            pass
+        await _safe_delete(progress)
         return
 
-    start, end = ecards.current_month_period()
     operations = []
     failed = False
     for gid, _ in my_groups:
@@ -357,50 +381,33 @@ async def ecards_group_spend(query: CallbackQuery, state: FSMContext):
             failed = True
             break
         operations.extend(result if isinstance(result, list) else [])
-
-    try:
-        await progress.delete()
-    except Exception:
-        pass
+    await _safe_delete(progress)
 
     if failed:
-        await query.message.answer("❌ Не удалось получить операции. Попробуйте позже.")
-        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        await target.answer("❌ Не удалось получить операции. Попробуйте позже.")
+        await _ecards_show_group_menu(target, user_id, state)
         return
 
     totals = ecards.sum_spend_by_currency(operations)
-    period = f"{start[:10]} — {end[:10]}"
-    lines = [
-        "💸 <b>Расход по вашим картам за текущий период</b>",
-        f"Период: {period}",
-        "",
-    ]
+    lines = ["💸 <b>Расход по вашим картам</b>", f"Период: {_fmt_period(start, end)}", ""]
     if not totals:
         lines.append("Расход за период отсутствует.")
     else:
         for currency, amount in sorted(totals.items()):
             lines.append(f"<b>{round(amount, 2)}</b> {currency}")
 
-    await query.message.answer("\n".join(lines), parse_mode="HTML")
-    await _ecards_show_group_menu(query.message, query.from_user.id, state)
+    await target.answer("\n".join(lines), parse_mode="HTML")
+    await _ecards_show_group_menu(target, user_id, state)
 
 
-@router.callback_query(F.data == "card_group:transactions", Form.card_actions_enter_number)
-async def ecards_group_transactions(query: CallbackQuery, state: FSMContext):
-    """Последние операции по картам байера за текущий месяц (до ECARDS_GROUP_TX_LIMIT)."""
-    await query.answer()
-    await delete_last_messages(query.from_user.id, query.message.bot)
-    progress = await query.message.answer("🔄 Загружаю транзакции...")
-
-    my_groups = await _resolve_buyer_groups(query, state)
+async def _run_group_transactions(target, user_id: int, state: FSMContext, start: str, end: str) -> None:
+    """Последние операции по группам байера за период (до ECARDS_GROUP_TX_LIMIT)."""
+    progress = await target.answer("🔄 Загружаю транзакции...")
+    my_groups = await _resolve_buyer_groups(target, user_id, state)
     if my_groups is None:
-        try:
-            await progress.delete()
-        except Exception:
-            pass
+        await _safe_delete(progress)
         return
 
-    start, end = ecards.current_month_period()
     operations = []
     failed = False
     for gid, _ in my_groups:
@@ -411,34 +418,146 @@ async def ecards_group_transactions(query: CallbackQuery, state: FSMContext):
             failed = True
             break
         operations.extend(ecards._as_list(result))
-
-    try:
-        await progress.delete()
-    except Exception:
-        pass
+    await _safe_delete(progress)
 
     if failed:
-        await query.message.answer("❌ Не удалось получить транзакции. Попробуйте позже.")
-        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        await target.answer("❌ Не удалось получить транзакции. Попробуйте позже.")
+        await _ecards_show_group_menu(target, user_id, state)
         return
 
-    # Сортируем по дате убыв. и берём последние N.
     operations.sort(key=lambda o: str(ecards.op_date(o) or ""), reverse=True)
     operations = operations[:ECARDS_GROUP_TX_LIMIT]
 
     if not operations:
-        await query.message.answer("📭 Транзакций по вашим картам за период не найдено.")
-        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        await target.answer("📭 Транзакций по вашим картам за период не найдено.")
+        await _ecards_show_group_menu(target, user_id, state)
         return
 
     blocks = [_format_transaction("ecards", i, tx) for i, tx in enumerate(operations, 1)]
-    # Бьём на сообщения по ECARDS_TX_CHUNK, чтобы не упереться в лимит Telegram.
-    for start_idx in range(0, len(blocks), ECARDS_TX_CHUNK):
-        chunk = blocks[start_idx:start_idx + ECARDS_TX_CHUNK]
-        header = "📜 <b>Последние транзакции</b>\n\n" if start_idx == 0 else ""
-        await query.message.answer(header + "\n".join(chunk), parse_mode="HTML")
+    header = f"📜 <b>Последние транзакции</b>\nПериод: {_fmt_period(start, end)}\n"
+    # Кладём страницы в state — навигация стрелками редактирует это же сообщение.
+    await state.update_data(tx_blocks=blocks, tx_header=header)
+    text, page, pages = _render_tx_page(blocks, 0, header)
+    await target.answer(text, parse_mode="HTML",
+                        reply_markup=get_tx_pagination_keyboard(page, pages))
+    await _ecards_show_group_menu(target, user_id, state)
 
-    await _ecards_show_group_menu(query.message, query.from_user.id, state)
+
+def _render_tx_page(blocks: list, page: int, header: str):
+    """Собирает текст страницы транзакций. Возвращает (text, page, pages)."""
+    pages = max(1, math.ceil(len(blocks) / ECARDS_TX_PAGE))
+    page = max(0, min(page, pages - 1))
+    chunk = blocks[page * ECARDS_TX_PAGE:(page + 1) * ECARDS_TX_PAGE]
+    text = f"{header}Стр. {page + 1}/{pages}\n\n" + "\n".join(chunk)
+    return text, page, pages
+
+
+@router.callback_query(F.data.startswith("txpage:"))
+async def tx_page_nav(query: CallbackQuery, state: FSMContext):
+    """Листание страниц транзакций стрелками (редактирует сообщение)."""
+    part = query.data.split(":", 1)[1]
+    if part == "noop":
+        await query.answer()
+        return
+
+    data = await state.get_data()
+    blocks = data.get("tx_blocks")
+    if not blocks:
+        await query.answer("Список устарел — откройте транзакции заново.", show_alert=True)
+        return
+
+    try:
+        target_page = int(part)
+    except ValueError:
+        await query.answer()
+        return
+
+    text, page, pages = _render_tx_page(blocks, target_page, data.get("tx_header", ""))
+    try:
+        await query.message.edit_text(
+            text, parse_mode="HTML", reply_markup=get_tx_pagination_keyboard(page, pages)
+        )
+    except Exception:
+        pass
+    await query.answer()
+
+
+# Пресеты периода → функция, возвращающая (start, end).
+_PERIOD_PRESETS = {
+    "month": ecards.current_month_period,
+    "prev": ecards.prev_month_period,
+    "7": lambda: ecards.last_days_period(7),
+    "30": lambda: ecards.last_days_period(30),
+}
+
+
+@router.callback_query(F.data.in_({"card_group:spend", "card_group:transactions"}),
+                       Form.card_actions_enter_number)
+async def ecards_group_action(query: CallbackQuery, state: FSMContext):
+    """Выбрано действие (расход/транзакции) → спрашиваем период."""
+    action = query.data.split(":", 1)[1]
+    await query.answer()
+    await state.update_data(group_action=action)
+    await delete_last_messages(query.from_user.id, query.message.bot)
+    m1 = await query.message.answer("🗓 <b>Выберите период:</b>", parse_mode="HTML",
+                                    reply_markup=get_period_keyboard())
+    m2 = await query.message.answer("❌ Отмена  /  🔄 Другая карта", reply_markup=card_flow_kb)
+    last_messages[query.from_user.id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.card_actions_choose_period)
+
+
+@router.callback_query(F.data.startswith("period:"), Form.card_actions_choose_period)
+async def period_selected(query: CallbackQuery, state: FSMContext):
+    """Пресет периода → сразу считаем; «Свой период» → просим ввести даты."""
+    choice = query.data.split(":", 1)[1]
+    await query.answer()
+    data = await state.get_data()
+    action = data.get("group_action", "spend")
+
+    if choice == "custom":
+        await delete_last_messages(query.from_user.id, query.message.bot)
+        m1 = await query.message.answer(
+            "✍️ Введите период — две даты через пробел:\n"
+            "<b>ДД.ММ.ГГГГ ДД.ММ.ГГГГ</b>  (например 01.07.2026 14.07.2026)",
+            parse_mode="HTML",
+            reply_markup=card_flow_kb,
+        )
+        last_messages[query.from_user.id] = [m1.message_id]
+        await state.set_state(Form.card_actions_enter_period)
+        return
+
+    fn = _PERIOD_PRESETS.get(choice)
+    if not fn:
+        await query.answer("❌ Неизвестный период", show_alert=True)
+        return
+    start, end = fn()
+    await delete_last_messages(query.from_user.id, query.message.bot)
+    if action == "transactions":
+        await _run_group_transactions(query.message, query.from_user.id, state, start, end)
+    else:
+        await _run_group_spend(query.message, query.from_user.id, state, start, end)
+
+
+@router.message(Form.card_actions_enter_period)
+async def custom_period_entered(message: Message, state: FSMContext):
+    """Парсит введённый диапазон дат и запускает выбранное действие."""
+    # "❌ Отмена" и "🔄 Другая карта" перехватываются раньше.
+    parsed = ecards.parse_period(message.text)
+    if not parsed:
+        await message.answer(
+            "❌ Неверный формат. Пример: <b>01.07.2026 14.07.2026</b> (две даты через пробел).",
+            parse_mode="HTML",
+            reply_markup=card_flow_kb,
+        )
+        return
+    start, end = parsed
+    data = await state.get_data()
+    action = data.get("group_action", "spend")
+    await delete_last_messages(message.from_user.id, message.bot)
+    if action == "transactions":
+        await _run_group_transactions(message, message.from_user.id, state, start, end)
+    else:
+        await _run_group_spend(message, message.from_user.id, state, start, end)
 
 
 # --------------------------------------------------------------------------- #
