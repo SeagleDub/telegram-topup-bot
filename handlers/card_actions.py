@@ -400,8 +400,12 @@ async def _run_group_spend(target, user_id: int, state: FSMContext, start: str, 
     await _ecards_show_group_menu(target, user_id, state)
 
 
-async def _run_group_transactions(target, user_id: int, state: FSMContext, start: str, end: str) -> None:
-    """Последние операции по группам байера за период (до ECARDS_GROUP_TX_LIMIT)."""
+async def _run_group_transactions(target, user_id: int, state: FSMContext,
+                                  start: str | None = None, end: str | None = None) -> None:
+    """Последние операции по группам байера (до ECARDS_GROUP_TX_LIMIT).
+
+    Без start/end — просто последние операции без ограничения периодом.
+    """
     progress = await target.answer("🔄 Загружаю транзакции...")
     my_groups = await _resolve_buyer_groups(target, user_id, state)
     if my_groups is None:
@@ -429,12 +433,13 @@ async def _run_group_transactions(target, user_id: int, state: FSMContext, start
     operations = operations[:ECARDS_GROUP_TX_LIMIT]
 
     if not operations:
-        await target.answer("📭 Транзакций по вашим картам за период не найдено.")
+        await target.answer("📭 Транзакций по вашим картам не найдено.")
         await _ecards_show_group_menu(target, user_id, state)
         return
 
     blocks = [_format_transaction("ecards", i, tx) for i, tx in enumerate(operations, 1)]
-    header = f"📜 <b>Последние транзакции</b>\nПериод: {_fmt_period(start, end)}\n"
+    period_line = f"Период: {_fmt_period(start, end)}\n" if (start and end) else ""
+    header = f"📜 <b>Последние транзакции</b>\n{period_line}"
     # Кладём страницы в state — навигация стрелками редактирует это же сообщение.
     await state.update_data(tx_blocks=blocks, tx_header=header)
     text, page, pages = _render_tx_page(blocks, 0, header)
@@ -494,11 +499,16 @@ _PERIOD_PRESETS = {
 @router.callback_query(F.data.in_({"card_group:spend", "card_group:transactions"}),
                        Form.card_actions_enter_number)
 async def ecards_group_action(query: CallbackQuery, state: FSMContext):
-    """Выбрано действие (расход/транзакции) → спрашиваем период."""
+    """Расход → выбор периода; последние транзакции → сразу список (без периода)."""
     action = query.data.split(":", 1)[1]
     await query.answer()
-    await state.update_data(group_action=action)
     await delete_last_messages(query.from_user.id, query.message.bot)
+
+    if action == "transactions":
+        await _run_group_transactions(query.message, query.from_user.id, state)
+        return
+
+    await state.update_data(group_action=action)
     m1 = await query.message.answer("🗓 <b>Выберите период:</b>", parse_mode="HTML",
                                     reply_markup=get_period_keyboard())
     m2 = await query.message.answer("❌ Отмена  /  🔄 Другая карта", reply_markup=card_flow_kb)

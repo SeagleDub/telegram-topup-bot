@@ -332,19 +332,24 @@ async def block_card(card_id_value) -> dict:
 # --------------------------------------------------------------------------- #
 # Операции по картам
 # --------------------------------------------------------------------------- #
-async def get_card_operations(created_from: str, created_to: str,
+async def get_card_operations(created_from: str | None = None, created_to: str | None = None,
                               card_ids: list | None = None,
                               group_ids: list | None = None,
                               offset: int = 0, limit: int = _PAGE_LIMIT) -> dict | list:
-    """Одна страница операций (GET /card-operation) за период, отсортировано по дате убыв."""
+    """Одна страница операций (GET /card-operation), отсортировано по дате убыв.
+
+    created_from/created_to опциональны: без них отдаются просто последние операции.
+    """
     params = [
         ("offset", str(offset)),
         ("limit", str(limit)),
         ("sortBy", "createdAt"),
         ("sortDirection", "desc"),
-        ("createdFrom", created_from),
-        ("createdTo", created_to),
     ]
+    if created_from:
+        params.append(("createdFrom", created_from))
+    if created_to:
+        params.append(("createdTo", created_to))
     for cid in (card_ids or []):
         params.append(("filterCardId[]", str(cid)))
     for gid in (group_ids or []):
