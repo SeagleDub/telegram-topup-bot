@@ -25,6 +25,7 @@ from keyboards import (
     get_card_bank_keyboard,
     get_card_action_keyboard,
     get_card_block_confirm_keyboard,
+    get_ecards_group_keyboard,
 )
 
 # Все состояния флоу "Действия с картами" (для StateFilter)
@@ -46,6 +47,11 @@ router = Router()
 
 MAX_TRANSACTIONS = 10
 ADSCARD_TRANSACTIONS_TIME = "month"
+
+# Сколько последних операций по группе показывать (API отдаёт до 100/страницу;
+# бьём вывод на сообщения, т.к. лимит Telegram ~4096 символов).
+ECARDS_GROUP_TX_LIMIT = 50
+ECARDS_TX_CHUNK = 20
 
 BANK_LABELS = {"adscard": "AdsCard", "multicards": "MultiCards", "ecards": "eCards"}
 
@@ -161,23 +167,9 @@ def format_card_summary(bank: str, card: dict) -> str:
         text("Владелец", card.get("card_user_email"))
         text("Комментарий", card.get("comment"))
     elif bank == "ecards":
-        # Поля из живого GET /card. Чувствительные (CVC, 3DS-пароль/OTP, token)
-        # НЕ выводим. Баланс лежит во вложенном account, группа — в groupsRelations.
+        # По требованию показываем только «Использовано». Чувствительные поля
+        # (CVC, 3DS-пароль/OTP, token, PAN, email владельца) не выводим.
         money("Использовано", card.get("sharedBalanceUsed"))
-        acc = card.get("account") or {}
-        if isinstance(acc, dict):
-            money("Баланс аккаунта", acc.get("balance"))
-        text("Платёжная система", card.get("paymentSystem"))
-        text("Действует до", card.get("cardExpire"))
-        rels = card.get("groupsRelations") or []
-        if rels and isinstance(rels[0], dict):
-            grp = rels[0].get("cardGroup") or {}
-            if isinstance(grp, dict):
-                text("Группа", grp.get("name"))
-        holder = card.get("holder") or {}
-        if isinstance(holder, dict):
-            text("Владелец", holder.get("email"))
-        text("Заметка", card.get("note"))
     else:
         money("Глобальный лимит", card.get("limitAmount"))
         money("Дневной лимит", card.get("dailyLimitAmount"))
@@ -279,6 +271,21 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     await query.answer()
     await delete_last_messages(query.from_user.id, query.message.bot)
 
+    # eCards: сверху действия по картам байера (по его группе), плюс ввод номера
+    # для действий по конкретной карте. Остаёмся в состоянии ввода номера —
+    # набранный текст обрабатывается как номер, кнопки — как колбэки card_group:*.
+    if bank == "ecards":
+        m1 = await query.message.answer(
+            "🏦 <b>eCards</b>\n\nВыберите действие по вашим картам "
+            "или введите полный номер карты для действий с картой:",
+            parse_mode="HTML",
+            reply_markup=get_ecards_group_keyboard(),
+        )
+        m2 = await query.message.answer("Или введите номер карты:", reply_markup=card_flow_kb)
+        last_messages[query.from_user.id] = [m1.message_id, m2.message_id]
+        await state.set_state(Form.card_actions_enter_number)
+        return
+
     m1 = await query.message.answer(
         f"🏦 <b>{BANK_LABELS[bank]}</b>\n\nВведите полный номер карты:",
         parse_mode="HTML",
@@ -286,6 +293,152 @@ async def card_bank_selected(query: CallbackQuery, state: FSMContext):
     )
     last_messages[query.from_user.id] = [m1.message_id]
     await state.set_state(Form.card_actions_enter_number)
+
+
+# --------------------------------------------------------------------------- #
+# eCards: действия по картам байера (технически по его группе, tg_id в названии)
+# --------------------------------------------------------------------------- #
+async def _ecards_show_group_menu(target, user_id: int, state: FSMContext) -> None:
+    """Пере-показывает меню действий eCards (расход/транзакции) + ввод номера."""
+    m1 = await target.answer(
+        "🏦 <b>eCards</b>\n\nВыберите действие или введите номер карты:",
+        parse_mode="HTML",
+        reply_markup=get_ecards_group_keyboard(),
+    )
+    m2 = await target.answer("Или введите номер карты:", reply_markup=card_flow_kb)
+    last_messages[user_id] = [m1.message_id, m2.message_id]
+    await state.set_state(Form.card_actions_enter_number)
+
+
+async def _resolve_buyer_groups(query: CallbackQuery, state: FSMContext):
+    """Группы байера по tg_id. При ошибке/пустоте сообщает и пере-показывает меню.
+
+    Возвращает список пар (id, name) либо None (уже обработано).
+    """
+    groups = await ecards.get_buyer_groups(query.from_user.id)
+    if _is_error(groups):
+        await query.message.answer("❌ Не удалось получить список групп. Попробуйте позже.")
+        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        return None
+
+    my_groups = [(ecards.group_id(g), ecards.group_name(g) or f"Группа {ecards.group_id(g)}")
+                 for g in groups if ecards.group_id(g) is not None]
+    if not my_groups:
+        await query.message.answer(
+            "📭 Для вас не найдено групп карт. Обратитесь к администратору "
+            "(в названии группы должен быть ваш Telegram-ID)."
+        )
+        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        return None
+    return my_groups
+
+
+@router.callback_query(F.data == "card_group:spend", Form.card_actions_enter_number)
+async def ecards_group_spend(query: CallbackQuery, state: FSMContext):
+    """Нетто-расход по картам байера за текущий месяц."""
+    await query.answer()
+    await delete_last_messages(query.from_user.id, query.message.bot)
+    progress = await query.message.answer("🔄 Считаю расход за текущий месяц...")
+
+    my_groups = await _resolve_buyer_groups(query, state)
+    if my_groups is None:
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+        return
+
+    start, end = ecards.current_month_period()
+    operations = []
+    failed = False
+    for gid, _ in my_groups:
+        result = await ecards.get_all_group_operations(gid, start, end)
+        if _is_error(result):
+            failed = True
+            break
+        operations.extend(result if isinstance(result, list) else [])
+
+    try:
+        await progress.delete()
+    except Exception:
+        pass
+
+    if failed:
+        await query.message.answer("❌ Не удалось получить операции. Попробуйте позже.")
+        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        return
+
+    totals = ecards.sum_spend_by_currency(operations)
+    period = f"{start[:10]} — {end[:10]}"
+    lines = [
+        "💸 <b>Расход по вашим картам за текущий период</b>",
+        f"Период: {period}",
+        "",
+    ]
+    if not totals:
+        lines.append("Расход за период отсутствует.")
+    else:
+        for currency, amount in sorted(totals.items()):
+            lines.append(f"<b>{round(amount, 2)}</b> {currency}")
+
+    await query.message.answer("\n".join(lines), parse_mode="HTML")
+    await _ecards_show_group_menu(query.message, query.from_user.id, state)
+
+
+@router.callback_query(F.data == "card_group:transactions", Form.card_actions_enter_number)
+async def ecards_group_transactions(query: CallbackQuery, state: FSMContext):
+    """Последние операции по картам байера за текущий месяц (до ECARDS_GROUP_TX_LIMIT)."""
+    await query.answer()
+    await delete_last_messages(query.from_user.id, query.message.bot)
+    progress = await query.message.answer("🔄 Загружаю транзакции...")
+
+    my_groups = await _resolve_buyer_groups(query, state)
+    if my_groups is None:
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+        return
+
+    start, end = ecards.current_month_period()
+    operations = []
+    failed = False
+    for gid, _ in my_groups:
+        result = await ecards.get_card_operations(
+            start, end, group_ids=[gid], limit=ECARDS_GROUP_TX_LIMIT
+        )
+        if _is_error(result):
+            failed = True
+            break
+        operations.extend(ecards._as_list(result))
+
+    try:
+        await progress.delete()
+    except Exception:
+        pass
+
+    if failed:
+        await query.message.answer("❌ Не удалось получить транзакции. Попробуйте позже.")
+        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        return
+
+    # Сортируем по дате убыв. и берём последние N.
+    operations.sort(key=lambda o: str(ecards.op_date(o) or ""), reverse=True)
+    operations = operations[:ECARDS_GROUP_TX_LIMIT]
+
+    if not operations:
+        await query.message.answer("📭 Транзакций по вашим картам за период не найдено.")
+        await _ecards_show_group_menu(query.message, query.from_user.id, state)
+        return
+
+    blocks = [_format_transaction("ecards", i, tx) for i, tx in enumerate(operations, 1)]
+    # Бьём на сообщения по ECARDS_TX_CHUNK, чтобы не упереться в лимит Telegram.
+    for start_idx in range(0, len(blocks), ECARDS_TX_CHUNK):
+        chunk = blocks[start_idx:start_idx + ECARDS_TX_CHUNK]
+        header = "📜 <b>Последние транзакции</b>\n\n" if start_idx == 0 else ""
+        await query.message.answer(header + "\n".join(chunk), parse_mode="HTML")
+
+    await _ecards_show_group_menu(query.message, query.from_user.id, state)
 
 
 # --------------------------------------------------------------------------- #

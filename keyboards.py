@@ -167,6 +167,17 @@ def get_card_action_keyboard(bank: str = "adscard"):
 
 
 
+def get_ecards_group_keyboard():
+    """Действия eCards по картам байера (технически по его группе, tg_id в названии).
+
+    Подписи без «по группе» — по требованию.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Расход", callback_data="card_group:spend")],
+        [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_group:transactions")],
+    ])
+
+
 def get_card_block_confirm_keyboard():
     """Клавиатура подтверждения блокировки карты"""
     return InlineKeyboardMarkup(inline_keyboard=[

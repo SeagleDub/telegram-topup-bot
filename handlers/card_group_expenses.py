@@ -8,7 +8,6 @@ Telegram-ID**. Поэтому байер видит расход только п
 календарный месяц (GET /card-operation с filterCardGroupId[]) и выводит нетто по
 валютам. Выбора чужих групп нет — приватность обеспечивается матчингом по tg_id.
 """
-import re
 import logging
 
 from aiogram import Router, F
@@ -27,15 +26,6 @@ def _is_error(result) -> bool:
     return isinstance(result, dict) and (bool(result.get("error")) or result.get("success") is False)
 
 
-def _name_matches_tg(name, tg_id: int) -> bool:
-    """True, если tg_id присутствует в имени группы как отдельный числовой токен.
-
-    Матчим по токенам (\\d+), а не по подстроке, чтобы 123 не совпало со 1234.
-    """
-    needle = str(tg_id)
-    return any(tok == needle for tok in re.findall(r"\d+", str(name or "")))
-
-
 @router.message(F.text == "💸 Расход по группе")
 async def show_group_expenses(message: Message):
     """Считает и показывает нетто-расход по группам байера за текущий месяц."""
@@ -47,7 +37,7 @@ async def show_group_expenses(message: Message):
     menu_kb = get_menu_keyboard(tg_id)
 
     progress = await message.answer("🔄 Считаю расход за текущий месяц...")
-    groups_result = await ecards.get_card_groups()
+    groups_result = await ecards.get_buyer_groups(tg_id)
 
     if _is_error(groups_result):
         try:
@@ -60,13 +50,8 @@ async def show_group_expenses(message: Message):
         )
         return
 
-    # Группы байера — те, в имени которых есть его tg_id.
-    my_groups = []
-    for g in ecards._as_list(groups_result):
-        gid = ecards.group_id(g)
-        name = ecards.group_name(g)
-        if gid is not None and _name_matches_tg(name, tg_id):
-            my_groups.append((gid, name or f"Группа {gid}"))
+    my_groups = [(ecards.group_id(g), ecards.group_name(g) or f"Группа {ecards.group_id(g)}")
+                 for g in groups_result if ecards.group_id(g) is not None]
 
     if not my_groups:
         try:
