@@ -434,6 +434,57 @@ async def get_card_groups() -> dict | list:
     return await _request("GET", "card-group", params=[("limit", str(_PAGE_LIMIT))])
 
 
+# --------------------------------------------------------------------------- #
+# Уведомления / 3DS-коды
+# --------------------------------------------------------------------------- #
+def notif_payload(notification: dict) -> dict:
+    """Разбирает JSON-строку payload уведомления. {} при ошибке."""
+    raw = notification.get("payload") if isinstance(notification, dict) else None
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+async def get_notifications(notif_type: str = "code_3ds", limit: int = _PAGE_LIMIT) -> dict | list:
+    """Уведомления заданного типа (GET /notification), новые сверху."""
+    params = [
+        ("offset", "0"),
+        ("limit", str(limit)),
+        ("sortBy", "createdAt"),
+        ("sortDirection", "desc"),
+        ("filterType[]", notif_type),
+    ]
+    return await _request("GET", "notification", params=params)
+
+
+async def find_latest_3ds(card_id_value) -> dict | None:
+    """Последний 3DS-код для карты из ленты уведомлений code_3ds.
+
+    Возвращает {"otpCode","amount","currency","merchant","cardNumber","createdAt"}
+    для самой свежей записи с нужным cardId, None если нет, либо dict с ошибкой.
+    """
+    result = await get_notifications("code_3ds")
+    if _is_error(result):
+        return result
+    needle = str(card_id_value)
+    for n in _as_list(result):  # уже отсортировано по дате убыв.
+        payload = notif_payload(n)
+        if str(payload.get("cardId")) == needle:
+            return {
+                "otpCode": payload.get("otpCode"),
+                "amount": payload.get("amount"),
+                "currency": payload.get("currency"),
+                "merchant": payload.get("merchant"),
+                "cardNumber": payload.get("cardNumber"),
+                "createdAt": n.get("createdAt"),
+            }
+    return None
+
+
 def group_id(group: dict):
     return _pick(group, "group_id")
 

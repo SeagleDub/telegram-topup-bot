@@ -158,10 +158,16 @@ def get_card_action_keyboard(bank: str = "adscard"):
             [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
         ]
 
+    # У eCards есть 3DS-коды (из ленты уведомлений).
+    extra = []
+    if bank == "ecards":
+        extra = [[InlineKeyboardButton(text="🔐 3DS код", callback_data="card_action:otp")]]
+
     return InlineKeyboardMarkup(inline_keyboard=[
         *limit_buttons,
         [InlineKeyboardButton(text="🚫 Заблокировать", callback_data="card_action:block")],
-        [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")]
+        [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")],
+        *extra,
     ])
 
 

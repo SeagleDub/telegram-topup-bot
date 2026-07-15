@@ -667,8 +667,51 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
         await query.answer()
         await _show_transactions(query, state, bank, card_id, data.get("card_number"))
 
+    elif action == "otp":
+        await query.answer()
+        await _show_card_3ds(query, state, bank, card_id, data.get("card_number"))
+
     else:
         await query.answer("❌ Неизвестное действие", show_alert=True)
+
+
+# --------------------------------------------------------------------------- #
+# 3DS-код (eCards)
+# --------------------------------------------------------------------------- #
+async def _show_card_3ds(query: CallbackQuery, state: FSMContext, bank: str, card_id, card_number):
+    """Показывает последний 3DS-код по карте из ленты уведомлений eCards."""
+    await delete_last_messages(query.from_user.id, query.message.bot)
+    progress = await query.message.answer("🔄 Получаю 3DS код...")
+    result = await ecards.find_latest_3ds(card_id)
+    await _safe_delete(progress)
+
+    if _is_error(result):
+        await query.message.answer("❌ Не удалось получить 3DS код. Попробуйте позже.")
+        await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
+        return
+
+    if not result:
+        await query.message.answer("📭 3DS код для этой карты не найден.")
+        await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
+        return
+
+    otp = result.get("otpCode") or "—"
+    currency = str(result.get("currency", "")).upper()
+    cur = f" {currency}" if currency else ""
+    lines = [
+        "🔐 <b>3DS код</b>",
+        f"Карта: <code>{mask_card_number(result.get('cardNumber') or card_number)}</code>",
+        f"Код: <code>{otp}</code>",
+    ]
+    if _has(result.get("amount")):
+        lines.append(f"Сумма: <b>{result.get('amount')}</b>{cur}")
+    if _has(result.get("merchant")):
+        lines.append(f"🏬 {result.get('merchant')}")
+    if _has(result.get("createdAt")):
+        lines.append(f"Время: {_pretty_dt(result.get('createdAt'))}")
+
+    await query.message.answer("\n".join(lines), parse_mode="HTML")
+    await _show_action_menu(query.message, query.from_user.id, state, bank, card_number)
 
 
 # --------------------------------------------------------------------------- #
