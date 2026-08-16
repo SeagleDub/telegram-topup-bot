@@ -89,7 +89,7 @@ async def show_group_expenses(message: Message):
 
     totals = ecards.sum_spend_by_currency(operations)
     group_titles = ", ".join(name for _, name in my_groups)
-    period = f"{start[:10]} — {end[:10]}"
+    period = f"{ecards.kyiv_date(start)} — {ecards.kyiv_date(end)}"
 
     lines = [
         "💸 <b>Расход по вашим картам за текущий период</b>",

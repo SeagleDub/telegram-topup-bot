@@ -189,6 +189,8 @@ def get_tx_pagination_keyboard(page: int, pages: int):
 def get_period_keyboard():
     """Выбор периода для расхода/транзакций: пресеты + свой диапазон."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Сегодня", callback_data="period:today"),
+         InlineKeyboardButton(text="📅 Вчера", callback_data="period:yesterday")],
         [InlineKeyboardButton(text="📅 Текущий месяц", callback_data="period:month")],
         [InlineKeyboardButton(text="📆 Прошлый месяц", callback_data="period:prev")],
         [InlineKeyboardButton(text="🗓 7 дней", callback_data="period:7"),

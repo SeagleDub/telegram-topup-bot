@@ -25,6 +25,15 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 
+# Периоды считаем в киевском времени (переход на лето/зиму — автоматически через
+# zoneinfo). Если системных tz-данных нет — запасной фиксированный UTC+2 (без DST);
+# для полной корректности стоит поставить пакет tzdata (см. requirements).
+try:
+    from zoneinfo import ZoneInfo
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except Exception:  # pragma: no cover - зависит от наличия tzdata в системе
+    KYIV_TZ = timezone(timedelta(hours=2))
+
 import aiohttp
 import bugsnag
 
@@ -220,8 +229,17 @@ def op_merchant(op: dict):
 
 
 def _iso(dt: datetime) -> str:
-    """datetime → ISO 8601 UTC с миллисекундами и суффиксом Z."""
+    """datetime → ISO 8601 UTC с миллисекундами и суффиксом Z.
+
+    Aware-datetime приводится к UTC; naive считается уже в UTC.
+    """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def _kyiv_now() -> datetime:
+    return datetime.now(KYIV_TZ)
 
 
 def _day_start(dt: datetime) -> datetime:
@@ -232,15 +250,36 @@ def _day_end(dt: datetime) -> datetime:
     return dt.replace(hour=23, minute=59, second=59, microsecond=999000)
 
 
+def kyiv_date(iso_utc: str) -> str:
+    """ISO-строка (UTC, суффикс Z) → дата ДД.ММ.ГГГГ в киевском времени."""
+    try:
+        dt = datetime.strptime(iso_utc, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return str(iso_utc)[:10]
+    return dt.astimezone(KYIV_TZ).strftime("%d.%m.%Y")
+
+
+def today_period() -> tuple[str, str]:
+    """(начало сегодняшнего дня по Киеву, сейчас) → ISO 8601 UTC."""
+    now = _kyiv_now()
+    return _iso(_day_start(now)), _iso(now)
+
+
+def yesterday_period() -> tuple[str, str]:
+    """(начало, конец вчерашнего дня по Киеву) → ISO 8601 UTC."""
+    y = _kyiv_now() - timedelta(days=1)
+    return _iso(_day_start(y)), _iso(_day_end(y))
+
+
 def current_month_period() -> tuple[str, str]:
-    """(начало текущего календарного месяца, сейчас) в ISO 8601 UTC."""
-    now = datetime.now(timezone.utc)
+    """(начало текущего месяца по Киеву, сейчас) → ISO 8601 UTC."""
+    now = _kyiv_now()
     return _iso(_day_start(now).replace(day=1)), _iso(now)
 
 
 def prev_month_period() -> tuple[str, str]:
-    """(начало, конец предыдущего календарного месяца) в ISO 8601 UTC."""
-    now = datetime.now(timezone.utc)
+    """(начало, конец предыдущего месяца по Киеву) → ISO 8601 UTC."""
+    now = _kyiv_now()
     first_this = _day_start(now).replace(day=1)
     end_prev = _day_end(first_this - timedelta(days=1))
     start_prev = _day_start(end_prev).replace(day=1)
@@ -248,16 +287,17 @@ def prev_month_period() -> tuple[str, str]:
 
 
 def last_days_period(days: int) -> tuple[str, str]:
-    """(начало N дней назад, сейчас) в ISO 8601 UTC."""
-    now = datetime.now(timezone.utc)
+    """(начало N дней назад по Киеву, сейчас) → ISO 8601 UTC."""
+    now = _kyiv_now()
     return _iso(_day_start(now - timedelta(days=days))), _iso(now)
 
 
 def parse_period(text: str) -> tuple[str, str] | None:
     """Парсит пользовательский период из двух дат через пробел/запятую.
 
-    Форматы дат: ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, ДД/ММ/ГГГГ. Начало — 00:00, конец —
-    23:59:59. Если даты перепутаны местами — меняем. None при ошибке.
+    Даты трактуются как киевские; в API уходят как UTC. Форматы:
+    ДД.ММ.ГГГГ, ГГГГ-ММ-ДД, ДД/ММ/ГГГГ. Начало — 00:00, конец — 23:59:59 (Киев).
+    Если даты перепутаны местами — меняем. None при ошибке.
     """
     parts = str(text or "").replace(",", " ").split()
     if len(parts) != 2:
@@ -266,7 +306,7 @@ def parse_period(text: str) -> tuple[str, str] | None:
     def parse_one(s: str):
         for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
             try:
-                return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+                return datetime.strptime(s, fmt).replace(tzinfo=KYIV_TZ)
             except ValueError:
                 continue
         return None

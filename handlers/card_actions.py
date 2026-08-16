@@ -362,7 +362,8 @@ async def _resolve_buyer_groups(target, user_id: int, state: FSMContext):
 
 
 def _fmt_period(start: str, end: str) -> str:
-    return f"{start[:10]} — {end[:10]}"
+    # Показываем даты в киевском времени (в API уходит UTC).
+    return f"{ecards.kyiv_date(start)} — {ecards.kyiv_date(end)}"
 
 
 async def _run_group_spend(target, user_id: int, state: FSMContext, start: str, end: str) -> None:
@@ -489,6 +490,8 @@ async def tx_page_nav(query: CallbackQuery, state: FSMContext):
 
 # Пресеты периода → функция, возвращающая (start, end).
 _PERIOD_PRESETS = {
+    "today": ecards.today_period,
+    "yesterday": ecards.yesterday_period,
     "month": ecards.current_month_period,
     "prev": ecards.prev_month_period,
     "7": lambda: ecards.last_days_period(7),
