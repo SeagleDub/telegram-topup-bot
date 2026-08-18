@@ -277,6 +277,25 @@ def current_month_period() -> tuple[str, str]:
     return _iso(_day_start(now).replace(day=1)), _iso(now)
 
 
+# Якорь и длина расчётного периода расхода по группе: 4 недели с 10.08.2026 (Киев).
+CYCLE_ANCHOR = (2026, 8, 10)
+CYCLE_DAYS = 28
+
+
+def current_cycle_period() -> tuple[str, str]:
+    """Текущее 4-недельное окно (от CYCLE_ANCHOR) по Киеву → ISO 8601 UTC.
+
+    Находим окно длиной CYCLE_DAYS, в которое попадает «сейчас» (работает и до
+    якоря — окна продлеваются назад). Возвращаем [начало окна, конец 28-го дня].
+    """
+    anchor = datetime(*CYCLE_ANCHOR, tzinfo=KYIV_TZ)
+    now = _kyiv_now()
+    cycles = (now - anchor).days // CYCLE_DAYS  # // округляет вниз и для отрицательных
+    start = _day_start(anchor + timedelta(days=CYCLE_DAYS * cycles))
+    end = _day_end(start + timedelta(days=CYCLE_DAYS - 1))
+    return _iso(start), _iso(end)
+
+
 def prev_month_period() -> tuple[str, str]:
     """(начало, конец предыдущего месяца по Киеву) → ISO 8601 UTC."""
     now = _kyiv_now()

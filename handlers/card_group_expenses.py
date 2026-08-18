@@ -36,7 +36,7 @@ async def show_group_expenses(message: Message):
     tg_id = message.from_user.id
     menu_kb = get_menu_keyboard(tg_id)
 
-    progress = await message.answer("🔄 Считаю расход за текущий месяц...")
+    progress = await message.answer("🔄 Считаю расход за текущий период...")
     groups_result = await ecards.get_buyer_groups(tg_id)
 
     if _is_error(groups_result):
@@ -65,7 +65,7 @@ async def show_group_expenses(message: Message):
         )
         return
 
-    start, end = ecards.current_month_period()
+    start, end = ecards.current_cycle_period()
     operations = []
     failed = False
     for gid, _ in my_groups:
