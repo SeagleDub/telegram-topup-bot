@@ -8,7 +8,6 @@ from handlers import topup
 from handlers import supplies
 from handlers import landing
 from handlers import unicalization
-from handlers import pixel
 from handlers import translation
 from handlers import expenses
 from handlers import google_sms
@@ -21,7 +20,6 @@ __all__ = [
     'supplies',
     'landing',
     'unicalization',
-    'pixel',
     'translation',
     'expenses',
     'google_sms',

@@ -27,10 +27,6 @@ class Form(StatesGroup):
     unicalization_copies = State()
     unicalization_archives = State()
 
-    # Пиксель система
-    entering_pixel_id = State()
-    entering_pixel_key = State()
-
     # Перевод лендинга
     choosing_target_language = State()
     choosing_target_country = State()
