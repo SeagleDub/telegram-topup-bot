@@ -58,13 +58,22 @@ _FIELDS = {
     "group_name": ("name",),
 }
 
-# Классификация типа операции для нетто-расхода делается по подстроке (см.
-# _op_sign), т.к. живые данные используют напр. "debit_authorization" (это
-# успешное списание, а не hold). Явные множества здесь только для документации.
+# Знак операции для нетто-расхода берётся из поля method, а не угадывается по
+# имени типа (см. _op_sign). Проверено на 2974 операциях аккаунта за 2026:
+#   debit_authorization -> sub | debit_declined    -> sub
+#   charge_reversal     -> add | charge_transaction -> add
+# Ни один тип не встречается с двумя разными method — поле однозначное.
+#
+# Почему не по имени типа: "charge_transaction" содержит "charge" и попадал в
+# списания, хотя это возврат на карту (method=add). Ошибка знака завышала расход
+# на удвоенную сумму таких операций.
+METHOD_SPEND = "sub"                          # списание с карты (+)
+METHOD_REFUND = "add"                         # возврат на карту (−)
+
+# Отсев по имени типа остаётся: method у отклонённых тот же, что у обычных
+# списаний (sub), поэтому отличить их можно только по типу.
 DECLINE_MARKERS = ("declin",)                 # отклонённые — не считаем
 SKIP_MARKERS = ("verif",)                     # 3DS-верификации ($0) — не считаем
-REFUND_MARKERS = ("refund", "return", "revers", "release", "unhold")  # возврат (−)
-SPEND_MARKERS = ("debit", "charge")           # списание (+)
 
 
 def _report(error, endpoint: str, **meta) -> None:
@@ -208,6 +217,11 @@ def op_currency(op: dict):
 
 def op_type(op: dict):
     return op.get("type") if isinstance(op, dict) else None
+
+
+def op_method(op: dict):
+    """Направление операции: "sub" — списание, "add" — возврат."""
+    return op.get("method") if isinstance(op, dict) else None
 
 
 def op_date(op: dict):
@@ -440,44 +454,62 @@ async def get_all_group_operations(group_id_value, created_from: str, created_to
     return all_ops
 
 
-def _op_sign(op_type_value) -> float:
+def _op_sign(op: dict) -> float:
     """Знак операции для расхода: +1 списание, -1 возврат, 0 не учитывать.
 
-    Классификация по подстроке типа: живые данные используют
-    "debit_authorization" (успешное списание), поэтому явных множеств мало.
-    Порядок проверок важен: сначала отсев (declined/verification), затем возврат,
-    затем списание.
+    Порядок: сначала отсев по типу (отклонённые, 3DS-верификации), затем знак
+    по полю method. Неизвестные тип/method не игнорируются молча — пишутся в
+    лог, иначе занижение расхода прошло бы незамеченным.
     """
-    t = str(op_type_value or "").lower()
+    t = str(op_type(op) or "").lower()
     if not t:
+        logger.warning("[ecards] операция без типа пропущена: id=%s", _op_id(op))
         return 0.0
     if any(m in t for m in DECLINE_MARKERS):
         return 0.0
     if any(m in t for m in SKIP_MARKERS):
         return 0.0
-    if any(m in t for m in REFUND_MARKERS):
-        return -1.0
-    if any(m in t for m in SPEND_MARKERS):
+
+    method = str(op_method(op) or "").lower()
+    if method == METHOD_SPEND:
         return 1.0
+    if method == METHOD_REFUND:
+        return -1.0
+
+    logger.warning(
+        "[ecards] операция не учтена в расходе: неизвестный method=%r (type=%r, id=%s). "
+        "Расход занижен на сумму этой операции.",
+        op.get("method"), op.get("type"), _op_id(op),
+    )
     return 0.0
 
 
-def sum_spend_by_currency(operations: list) -> dict[str, float]:
-    """Нетто-расход по валютам: + списания, − возвраты; прочие типы игнорируются.
+def _op_id(op: dict):
+    return op.get("id") if isinstance(op, dict) else None
 
-    Сумма — поле value операции, валюта — валюта карты. Оба парсятся толерантно.
+
+def sum_spend_by_currency(operations: list) -> dict[str, float]:
+    """Нетто-расход по валютам: + списания (method=sub), − возвраты (method=add).
+
+    Отклонённые операции и 3DS-верификации не учитываются. Сумма — поле value
+    операции, валюта — валюта карты. Оба парсятся толерантно; операция с
+    неразбираемой суммой пишется в лог, а не отбрасывается молча.
     """
     totals: dict[str, float] = {}
     for op in operations:
         if not isinstance(op, dict):
             continue
-        sign = _op_sign(op_type(op))
+        sign = _op_sign(op)
         if sign == 0.0:
             continue
 
         try:
             amount = abs(float(str(op_value(op)).replace(",", ".")))
         except (TypeError, ValueError):
+            logger.warning(
+                "[ecards] операция не учтена в расходе: сумма не разбирается value=%r (id=%s)",
+                op_value(op), _op_id(op),
+            )
             continue
 
         currency = str(op_currency(op) or "").upper() or "?"
