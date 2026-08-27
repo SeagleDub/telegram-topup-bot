@@ -1,14 +1,102 @@
 """
-Утилиты для работы с сообщениями и администрированием
+Утилиты для работы с сообщениями и администрированием.
+
+Вайтлист пользователей живёт в Google Sheets и кэшируется в памяти на
+WHITELIST_TTL секунд: проверка доступа выполняется на каждое событие, а
+сетевой вызов на каждое событие недопустим.
+
+Отказ Google Sheets НЕ приводит к тихой блокировке всех: пока есть прошлый
+успешный ответ — используется он (устаревший, но рабочий), и в лог пишется
+ошибка. Если успешного ответа ещё не было — доступ закрыт всем (fail-closed).
 """
-from typing import Dict, List
+import logging
+import time
+from typing import Dict, List, Optional, Set
 import gspread
 from config import ADMIN_ID, TEAMLEADER_ID, GOOGLE_SHEET_ID
 from aiogram import Bot
 
+logger = logging.getLogger(__name__)
+
 # Глобальные переменные для хранения состояния сообщений
 last_messages: Dict[int, List[int]] = {}
 linked_messages: Dict[str, str] = {}  # Словарь для связывания сообщений админа и тимлидера
+
+# --------------------------------------------------------------------------- #
+# Вайтлист: кэш и загрузка
+# --------------------------------------------------------------------------- #
+WHITELIST_TTL = 300           # сколько секунд считать кэш свежим
+GOOGLE_CREDENTIALS_FILE = "credentials.json"
+WHITELIST_WORKSHEET_INDEX = 1  # лист с ID пользователей
+WHITELIST_COLUMN = 1           # колонка с ID
+
+
+class WhitelistUnavailable(RuntimeError):
+    """Вайтлист не удалось прочитать и годного кэша нет."""
+
+
+_whitelist_cache: Dict[str, object] = {"ids": None, "loaded_at": 0.0}
+
+
+def _fetch_whitelist_from_sheet() -> Set[int]:
+    """Читает ID пользователей из Google Sheets. Бросает исключение при ошибке.
+
+    Намеренно не глушит исключение: отличить «таблица недоступна» от
+    «таблица пуста» иначе невозможно, а разница между ними — это разница
+    между сбоем инфраструктуры и осознанно пустым списком доступа.
+    """
+    gc = gspread.service_account(filename=GOOGLE_CREDENTIALS_FILE)
+    table = gc.open_by_key(GOOGLE_SHEET_ID)
+    worksheet = table.get_worksheet(WHITELIST_WORKSHEET_INDEX)
+    raw = worksheet.col_values(WHITELIST_COLUMN)
+    return {int(value) for value in raw if str(value).strip().isdigit()}
+
+
+def get_whitelist(force_refresh: bool = False) -> Set[int]:
+    """Возвращает вайтлист из кэша, обновляя его по TTL.
+
+    При ошибке чтения отдаёт последний успешный кэш (устаревший) и пишет в лог.
+    Если успешного чтения ещё не было — бросает WhitelistUnavailable.
+    """
+    cached = _whitelist_cache.get("ids")
+    age = time.monotonic() - float(_whitelist_cache.get("loaded_at") or 0.0)
+
+    if cached is not None and not force_refresh and age < WHITELIST_TTL:
+        return cached  # type: ignore[return-value]
+
+    try:
+        ids = _fetch_whitelist_from_sheet()
+    except Exception as e:
+        if cached is not None:
+            logger.error(
+                "[whitelist] не удалось обновить список из Google Sheets (%s: %s). "
+                "Использую кэш возрастом %.0f с — доступ может быть неактуальным.",
+                type(e).__name__, e, age,
+            )
+            return cached  # type: ignore[return-value]
+        logger.error(
+            "[whitelist] не удалось прочитать список из Google Sheets и кэша нет "
+            "(%s: %s). Доступ закрыт всем, кроме админа и тимлидера.",
+            type(e).__name__, e,
+        )
+        raise WhitelistUnavailable(str(e)) from e
+
+    if not ids:
+        # Пустая таблица — валидный ответ, но почти наверняка ошибка настройки.
+        logger.warning(
+            "[whitelist] Google Sheets вернул пустой список пользователей "
+            "(лист %s, колонка %s). Доступ будет только у админа и тимлидера.",
+            WHITELIST_WORKSHEET_INDEX, WHITELIST_COLUMN,
+        )
+
+    _whitelist_cache["ids"] = ids
+    _whitelist_cache["loaded_at"] = time.monotonic()
+    return ids
+
+
+def is_admin(user_id: int) -> bool:
+    """Админ или тимлидер — повышенный уровень доступа."""
+    return user_id == ADMIN_ID or user_id == TEAMLEADER_ID
 
 async def delete_last_messages(user_id: int, bot: Bot):
     """Удаляет последние сообщения пользователя"""
@@ -21,27 +109,24 @@ async def delete_last_messages(user_id: int, bot: Bot):
     last_messages[user_id] = []
 
 def is_user_allowed(user_id: int) -> bool:
-    """Проверяет, разрешен ли пользователю доступ к функциям бота"""
-    # Администратор и тимлидер всегда имеют доступ ко всем функциям
-    if user_id == ADMIN_ID or user_id == TEAMLEADER_ID:
+    """Разрешён ли пользователю доступ к функциям бота (fail-closed).
+
+    Основная точка проверки — middlewares.auth.AuthMiddleware. Эта функция
+    оставлена как переиспользуемый предикат и для проверок вне middleware.
+    """
+    if is_admin(user_id):
         return True
+    try:
+        return user_id in get_whitelist()
+    except WhitelistUnavailable:
+        return False
 
-    user_ids = get_user_ids_from_sheet()
-    if not user_ids:
-        return False  # Если список пуст, доступ запрещен
-
-    return user_id in user_ids
 
 def get_user_ids_from_sheet() -> List[int]:
-    """Получает список ID пользователей из Google Sheets"""
+    """Список ID пользователей из вайтлиста. Пустой список при недоступности."""
     try:
-        gc = gspread.service_account(filename='credentials.json')
-        table = gc.open_by_key(GOOGLE_SHEET_ID)
-        worksheet = table.get_worksheet(1)
-        user_ids = worksheet.col_values(1)
-
-        return [int(user_id) for user_id in user_ids if user_id.isdigit()]
-    except Exception:
+        return sorted(get_whitelist())
+    except WhitelistUnavailable:
         return []
 
 async def send_notification_to_admins(bot: Bot, message_text: str, reply_markup=None):

@@ -11,7 +11,7 @@ from aiogram.fsm.context import FSMContext
 from states import Form
 from keyboards import (get_landing_category_keyboard, get_admin_processing_keyboard,
                          cancel_kb, get_menu_keyboard, ready_kb)
-from utils import (is_user_allowed, last_messages, send_notification_with_buttons,
+from utils import (last_messages, send_notification_with_buttons,
                      send_document_to_admins, send_photo_to_admins, delete_last_messages)
 from config import GOOGLE_SHEET_ID
 
@@ -23,9 +23,6 @@ VALID_LINK_REGEX = re.compile(r"^https:\/\/chatgpt\.com\/canvas\/shared\/[a-zA-Z
 @router.message(F.text == "🌐 Создать/починить лендинг")
 async def create_landing(message: Message, state: FSMContext):
     """Начинает процесс создания или починки лендинга"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     kb = get_landing_category_keyboard()
     m1 = await message.answer("Выберите действие:", reply_markup=kb)

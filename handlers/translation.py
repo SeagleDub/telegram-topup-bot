@@ -18,7 +18,7 @@ from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
-from utils import is_user_allowed, last_messages
+from utils import last_messages
 from config import OPENAI_API_KEY
 
 
@@ -684,9 +684,6 @@ def create_translated_zip(original_zip: bytes, translated_files: Dict[str, str])
 @router.message(F.text == "🌍 Перевод лендинга")
 async def translate_landing_start(message: Message, state: FSMContext):
     """Начинает процесс перевода лендинга"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     # Проверяем наличие необходимых API ключей
     if not OPENAI_API_KEY:

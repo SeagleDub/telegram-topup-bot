@@ -108,8 +108,47 @@ def format_card_summary(card: dict) -> str:
     return "\n".join(lines)
 
 
-async def _find_card(number: str):
-    return await ecards.find_card_by_number(number)
+async def _buyer_group_ids(user_id: int) -> list | None:
+    """ID групп байера. None — не удалось получить (ошибка API)."""
+    groups = await ecards.get_buyer_groups(user_id)
+    if _is_error(groups):
+        logger.error("[card_actions] не удалось получить группы: user_id=%s", user_id)
+        return None
+    return [gid for gid in (ecards.group_id(g) for g in groups) if gid is not None]
+
+
+async def _find_card(number: str, group_ids: list):
+    """Ищет карту только среди групп байера (серверный фильтр)."""
+    return await ecards.find_card_by_number(number, group_ids=group_ids)
+
+
+async def _assert_card_access(card_id, user_id: int) -> bool:
+    """Подтверждает право на действие с картой в момент действия.
+
+    Проверки при поиске недостаточно: card_id хранится в FSM state и переживает
+    кнопку «Другая карта», перезапуск флоу и любой другой путь, которым в state
+    может оказаться чужой идентификатор.
+    """
+    group_ids = await _buyer_group_ids(user_id)
+    if not group_ids:
+        logger.warning("[card_actions] отказ в доступе: у user_id=%s нет групп", user_id)
+        return False
+    allowed = await ecards.card_in_groups(card_id, group_ids)
+    if not allowed:
+        logger.warning(
+            "[card_actions] ОТКАЗ В ДОСТУПЕ: user_id=%s пытался действовать с card_id=%s "
+            "вне своих групп %s", user_id, card_id, group_ids,
+        )
+    return allowed
+
+
+async def _deny_card_access(target, user_id: int, state: FSMContext) -> None:
+    """Отказ в доступе к карте: чистим state и возвращаем в меню."""
+    await state.clear()
+    await target.answer(
+        "❌ Эта карта вам недоступна.",
+        reply_markup=get_menu_keyboard(user_id),
+    )
 
 
 async def _show_action_menu(target, user_id: int, state: FSMContext, card_number) -> None:
@@ -318,12 +357,26 @@ async def card_number_entered(message: Message, state: FSMContext):
         return
 
     progress = await message.answer("🔄 Ищу карту...")
-    result = await _find_card(number)
 
-    try:
-        await progress.delete()
-    except Exception:
-        pass
+    group_ids = await _buyer_group_ids(message.from_user.id)
+    if group_ids is None:
+        await _safe_delete(progress)
+        await message.answer(
+            "❌ Не удалось проверить доступ к картам. Попробуйте позже.",
+            reply_markup=card_flow_kb,
+        )
+        return
+    if not group_ids:
+        await _safe_delete(progress)
+        await message.answer(
+            "📭 Для вас не найдено групп карт. Обратитесь к администратору "
+            "(в названии группы должен быть ваш Telegram-ID).",
+            reply_markup=card_flow_kb,
+        )
+        return
+
+    result = await _find_card(number, group_ids)
+    await _safe_delete(progress)
 
     if isinstance(result, dict) and result.get("error"):
         await message.answer(
@@ -334,7 +387,8 @@ async def card_number_entered(message: Message, state: FSMContext):
 
     if not result:
         await message.answer(
-            "❌ Карта с таким номером не найдена. Проверьте номер и попробуйте снова.",
+            "❌ Карта с таким номером не найдена среди ваших карт. "
+            "Проверьте номер и попробуйте снова.",
             reply_markup=card_flow_kb,
         )
         return
@@ -370,6 +424,13 @@ async def card_action_selected(query: CallbackQuery, state: FSMContext):
             reply_markup=get_menu_keyboard(query.from_user.id),
         )
         await state.clear()
+        return
+
+    # Право на действие подтверждаем здесь, а не полагаемся на проверку при
+    # поиске: card_id пришёл из state и мог там оказаться другим путём.
+    if not await _assert_card_access(card_id, query.from_user.id):
+        await query.answer()
+        await _deny_card_access(query.message, query.from_user.id, state)
         return
 
     if action == "block":
@@ -536,6 +597,12 @@ async def card_block_confirmed(query: CallbackQuery, state: FSMContext):
     if choice != "yes":
         await query.message.answer("Блокировка отменена.")
         await _show_action_menu(query.message, query.from_user.id, state, card_number)
+        return
+
+    # Блокировка необратима — подтверждаем право ещё раз, непосредственно
+    # перед вызовом API, а не только на шаге выбора действия.
+    if not await _assert_card_access(card_id, query.from_user.id):
+        await _deny_card_access(query.message, query.from_user.id, state)
         return
 
     progress = await query.message.answer("🔄 Блокирую карту...")

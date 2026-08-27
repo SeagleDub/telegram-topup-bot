@@ -19,7 +19,7 @@ import bugsnag
 
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
-from utils import is_user_allowed, last_messages
+from utils import last_messages
 
 router = Router()
 
@@ -264,9 +264,6 @@ async def process_archive_multiple(bot: Bot, file_id: str, user_id: int, archive
 @router.message(F.text == "🖼️ Уникализатор")
 async def images_unicalization_initiation(message: Message, state: FSMContext):
     """Начинает процесс уникализации изображений"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     m1 = await message.answer("Загрузите изображение для уникализации или ZIP архив с несколькими изображениями:")
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)

@@ -74,3 +74,19 @@ node_modules/
 .next/
 out/
 .vercel
+
+# Учётные данные (сервис-аккаунты, ключи, сертификаты)
+credentials.json
+*credentials*.json
+*serviceAccount*.json
+*service_account*.json
+*.pem
+*.p12
+*.pfx
+*.key
+.env.*
+!.env.example
+
+# Выгрузки данных API (могут содержать PAN, CVV, 3DS-пароли)
+*_DUMP.json
+ops_dump*.json

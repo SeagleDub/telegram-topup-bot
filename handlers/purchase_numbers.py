@@ -3,6 +3,8 @@
 """
 import asyncio
 from datetime import datetime
+import logging
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -11,6 +13,8 @@ from states import Form
 from keyboards import cancel_kb, get_menu_keyboard, get_purchase_country_keyboard
 from utils import last_messages, delete_last_messages
 from services.luboydomen import get_all_phone_numbers, purchase_number
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -207,7 +211,8 @@ async def process_quantity(message: Message, state: FSMContext):
                 await asyncio.sleep(API_REQUEST_DELAY)
 
         except Exception as e:
-            errors.append(f"Номер {i+1}: {str(e)}")
+            logger.exception("[purchase_numbers] покупка номера #%s не удалась", i + 1)
+            errors.append(f"Номер {i+1}: внутренняя ошибка")
             if i < quantity - 1:
                 await asyncio.sleep(API_REQUEST_DELAY)
 
@@ -275,8 +280,9 @@ async def show_numbers_list(message: Message, state: FSMContext):
             await progress_msg.delete()
         except:
             pass
+        logger.exception("[purchase_numbers] получение списка номеров не удалось")
         await message.answer(
-            f"❌ Ошибка при получении списка: {str(e)}",
+            "❌ Не удалось получить список номеров. Попробуйте позже.",
             reply_markup=get_menu_keyboard(message.from_user.id)
         )
         return

@@ -8,16 +8,13 @@ from aiogram.fsm.context import FSMContext
 from states import Form
 from keyboards import (get_supply_category_keyboard, get_account_type_keyboard,
                        get_admin_processing_keyboard, cancel_kb, get_menu_keyboard)
-from utils import is_user_allowed, last_messages, send_notification_with_buttons
+from utils import last_messages, send_notification_with_buttons
 
 router = Router()
 
 @router.message(F.text == "📂 Запросить расходники")
 async def request_supplies(message: Message, state: FSMContext):
     """Начинает процесс запроса расходников"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     kb = get_supply_category_keyboard()
     m1 = await message.answer("Выберите категорию расходников:", reply_markup=kb)

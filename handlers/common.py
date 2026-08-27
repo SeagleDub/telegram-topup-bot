@@ -10,6 +10,7 @@ from keyboards import get_menu_keyboard, cancel_kb
 from utils import (last_messages, delete_last_messages, update_linked_messages,
                      send_notification_to_admins)
 from config import ADMIN_ID, TEAMLEADER_ID
+from middlewares import admin_only
 
 router = Router()
 
@@ -24,6 +25,7 @@ async def send_welcome(message: Message):
         await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
 
 @router.callback_query(F.data.startswith("approve:"))
+@admin_only
 async def approve_request(query: CallbackQuery):
     """Одобряет заявку пользователя"""
     _, user_id = query.data.split(":")
@@ -43,6 +45,7 @@ async def approve_request(query: CallbackQuery):
     await query.answer("Пользователь уведомлен об одобрении")
 
 @router.callback_query(F.data.startswith("processing:"))
+@admin_only
 async def processing_request(query: CallbackQuery):
     """Берет заявку в работу"""
     _, user_id = query.data.split(":")
@@ -62,6 +65,7 @@ async def processing_request(query: CallbackQuery):
     await query.answer("Пользователь уведомлен о взятии в работу")
 
 @router.callback_query(F.data.startswith("decline:"))
+@admin_only
 async def decline_request(query: CallbackQuery):
     """Отклоняет заявку пользователя"""
     _, user_id = query.data.split(":")

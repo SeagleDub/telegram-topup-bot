@@ -19,7 +19,7 @@ from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import get_menu_keyboard, get_group_expenses_period_keyboard, cancel_kb
-from utils import is_user_allowed, last_messages, delete_last_messages
+from utils import last_messages, delete_last_messages
 import services.ecards as ecards
 
 logger = logging.getLogger(__name__)
@@ -54,9 +54,6 @@ async def _safe_delete(msg) -> None:
 @router.message(F.text == "💸 Расход по группе")
 async def start_group_expenses(message: Message, state: FSMContext):
     """Предлагает выбрать период, за который считать расход."""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     m1 = await message.answer(
         "💸 <b>Расход по вашим картам</b>\n\nВыберите период:",

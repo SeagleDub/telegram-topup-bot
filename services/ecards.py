@@ -363,15 +363,31 @@ async def get_cards(search: str | None = None) -> dict | list:
     return await _request("GET", "card", params=params)
 
 
-async def find_card_by_number(number: str) -> dict | None:
+async def find_card_by_number(number: str, group_ids: list | None = None) -> dict | None:
     """Ищет карту по полному номеру в GET /card.
 
     Контракт: {"card": <карта>, "multiple": bool} | {"error": ...} | None.
     Пробуем сузить выборку через search, при необходимости листаем страницы.
+
+    group_ids — ограничение выборки группами байера через серверный фильтр
+    filterCardGroupId[] (API.md). Это и есть проверка права доступа: карта вне
+    этих групп не вернётся из API вовсе, поэтому её нельзя ни увидеть, ни
+    выбрать. Фильтровать на стороне бота было бы хуже: полный список карт
+    аккаунта пришлось бы выкачивать в память процесса.
+
+    group_ids=None означает «без ограничения» и допустим только для
+    административных сценариев. Пустой список означает «групп нет» — поиск не
+    выполняется, иначе фильтр выродится и вернутся все карты аккаунта.
     """
     needle = card_digits(number)
     if not needle:
         return None
+
+    if group_ids is not None and not group_ids:
+        logger.warning("[ecards] поиск карты без групп — доступ пуст, поиск не выполняется")
+        return None
+
+    group_params = [("filterCardGroupId[]", str(gid)) for gid in (group_ids or [])]
 
     last4 = needle[-4:] if len(needle) >= 4 else None
     for page in range(_MAX_PAGES):
@@ -379,7 +395,7 @@ async def find_card_by_number(number: str) -> dict | None:
             ("offset", str(page * _PAGE_LIMIT)),
             ("limit", str(_PAGE_LIMIT)),
             ("search", number),
-        ])
+        ] + group_params)
         if _is_error(result):
             return {"error": result.get("error"), "details": result.get("details")}
         cards = _as_list(result)
@@ -395,6 +411,30 @@ async def find_card_by_number(number: str) -> dict | None:
         if _page_is_last(result) or len(cards) < _PAGE_LIMIT:
             break
     return None
+
+
+async def card_in_groups(card_id_value, group_ids: list) -> bool:
+    """Принадлежит ли карта одной из групп (проверка перед действием).
+
+    Отдельный запрос, а не доверие к тому, что карту нашли раньше: card_id
+    живёт в FSM state и переживает смену карты, поэтому право на действие надо
+    подтверждать в момент действия, а не в момент поиска.
+    """
+    if not group_ids or card_id_value is None:
+        return False
+
+    params = [("limit", str(_PAGE_LIMIT)), ("filterId[]", str(card_id_value))]
+    params += [("filterCardGroupId[]", str(gid)) for gid in group_ids]
+    result = await _request("GET", "card", params=params)
+    if _is_error(result):
+        # Не смогли подтвердить право — значит его нет (fail-closed).
+        logger.error("[ecards] проверка доступа к карте не выполнена: %s", result.get("error"))
+        return False
+
+    for card in _as_list(result):
+        if str(card_id(card)) == str(card_id_value):
+            return True
+    return False
 
 
 async def block_card(card_id_value) -> dict:

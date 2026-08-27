@@ -11,6 +11,7 @@ from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
 from utils import last_messages, delete_last_messages
 from config import ADMIN_ID, TEAMLEADER_ID
+from middlewares import admin_only
 from services.luboydomen import get_all_phone_numbers, toggle_auto_renewal
 
 router = Router()
@@ -85,15 +86,9 @@ def find_numbers_by_queries(queries: list[str], all_numbers: list[dict]) -> tupl
 
 
 @router.message(F.text == "🔄 Автопродление номеров")
+@admin_only
 async def start_auto_renewal(message: Message, state: FSMContext):
     """Начинает процесс управления автопродлением (только для админа и тимлидера)"""
-    if message.from_user.id != ADMIN_ID and message.from_user.id != TEAMLEADER_ID:
-        await message.answer(
-            "❌ У вас нет доступа к этой функции.",
-            reply_markup=get_menu_keyboard(message.from_user.id)
-        )
-        return
-
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Включить автопродление", callback_data="auto_renew:enable")],
         [InlineKeyboardButton(text="❌ Выключить автопродление", callback_data="auto_renew:disable")]
@@ -122,6 +117,7 @@ async def cancel_auto_renewal_action(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("auto_renew:"), Form.choosing_auto_renewal_action)
+@admin_only
 async def choose_auto_renewal_action(query: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор включения/выключения автопродления"""
     action = query.data.split(":")[1]
@@ -161,6 +157,7 @@ async def cancel_auto_renewal_numbers(message: Message, state: FSMContext):
 
 
 @router.message(Form.selecting_auto_renewal_numbers)
+@admin_only
 async def process_auto_renewal_numbers_input(message: Message, state: FSMContext):
     """Обрабатывает ввод списка номеров для автопродления"""
     data = await state.get_data()
@@ -189,8 +186,9 @@ async def process_auto_renewal_numbers_input(message: Message, state: FSMContext
             await progress_msg.delete()
         except:
             pass
+        logger.exception("[auto_renewal] получение списка номеров не удалось")
         await message.answer(
-            f"❌ Ошибка при получении списка: {str(e)}",
+            "❌ Не удалось получить список номеров. Попробуйте позже.",
             reply_markup=get_menu_keyboard(message.from_user.id)
         )
         await state.clear()
@@ -301,6 +299,7 @@ async def cancel_auto_renewal_confirm(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data == "auto_renew_confirm", Form.confirming_auto_renewal)
+@admin_only
 async def execute_auto_renewal(query: CallbackQuery, state: FSMContext):
     """Запускает процесс изменения автопродления"""
     data = await state.get_data()
@@ -361,7 +360,8 @@ async def execute_auto_renewal(query: CallbackQuery, state: FSMContext):
                 error_list.append(f"{number['phone_number']}: Неожиданный ответ: {str(result)[:200]}")
                 logger.warning(f"[auto_renewal] UNEXPECTED RESPONSE for {number['phone_number']}: {result}")
         except Exception as e:
-            error_list.append(f"{number['phone_number']}: {str(e)}")
+            logger.exception("[auto_renewal] ошибка по номеру %s", number.get('phone_number'))
+            error_list.append(f"{number['phone_number']}: внутренняя ошибка")
             logger.exception(f"[auto_renewal] EXCEPTION for {number['phone_number']}")
 
         # Обновляем прогресс

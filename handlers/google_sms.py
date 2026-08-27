@@ -2,6 +2,8 @@
 Обработчики для получения SMS кодов Google Ads
 """
 from datetime import datetime
+import logging
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -10,6 +12,8 @@ from states import Form
 from keyboards import cancel_kb, get_menu_keyboard, get_google_sms_keyboard
 from utils import last_messages, delete_last_messages
 from services.luboydomen import get_all_phone_numbers, get_sms_messages
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -78,8 +82,9 @@ async def process_phone_query(message: Message, state: FSMContext):
     try:
         number_data = await find_number_by_query(query)
     except Exception as e:
+        logger.exception("[google_sms] поиск номера не удался: query=%r", query)
         await message.answer(
-            f"❌ Ошибка при поиске номера: {str(e)}",
+            "❌ Не удалось найти номер. Попробуйте позже.",
             reply_markup=get_menu_keyboard(message.from_user.id)
         )
         await state.clear()
@@ -178,8 +183,9 @@ async def get_google_sms_code(query: CallbackQuery, state: FSMContext):
     try:
         sms_result = await get_sms_messages(number_id)
     except Exception as e:
+        logger.exception("[google_sms] получение SMS не удалось: number_id=%s", number_id)
         await query.message.answer(
-            f"❌ Ошибка при получении SMS: {str(e)}",
+            "❌ Не удалось получить SMS. Попробуйте позже.",
             reply_markup=get_menu_keyboard(query.from_user.id)
         )
         return

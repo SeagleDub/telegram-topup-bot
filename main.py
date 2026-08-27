@@ -13,6 +13,7 @@ logging.basicConfig(
 )
 
 from config import API_TOKEN
+from middlewares import AuthMiddleware, ThrottleMiddleware
 from handlers import (
     common,
     topup,
@@ -35,6 +36,14 @@ async def main():
     bot = Bot(token=API_TOKEN)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+
+    # Middleware выполняются до любого хендлера и в этом порядке.
+    # Сначала аутентификация: чужой не должен даже расходовать лимит частоты.
+    # Регистрируем и на message, и на callback_query — инлайн-кнопки это
+    # отдельный тип события, и проверка на message его не покрывает.
+    for observer in (dp.message, dp.callback_query):
+        observer.middleware(AuthMiddleware())
+        observer.middleware(ThrottleMiddleware())
 
     # Подключаем роутеры обработчиков
     dp.include_router(common.router)

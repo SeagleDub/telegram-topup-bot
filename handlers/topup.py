@@ -7,16 +7,13 @@ from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import get_bank_keyboard, get_topup_type_keyboard, get_admin_action_keyboard, cancel_kb, get_menu_keyboard
-from utils import is_user_allowed, last_messages, delete_last_messages, send_notification_with_buttons
+from utils import last_messages, delete_last_messages, send_notification_with_buttons
 
 router = Router()
 
 @router.message(F.text == "💰 Заказать пополнение")
 async def order_topup(message: Message, state: FSMContext):
     """Начинает процесс заказа пополнения"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     kb = get_bank_keyboard()
     m1 = await message.answer("Выберите банк:", reply_markup=kb)

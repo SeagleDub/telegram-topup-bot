@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
-from utils import is_user_allowed, last_messages, send_notification_to_admins
+from utils import last_messages, send_notification_to_admins
 from config import GOOGLE_SHEET_ID
 
 router = Router()
@@ -18,9 +18,6 @@ router = Router()
 @router.message(F.text == "📊 Добавить пиксель в систему")
 async def add_pixel_to_system(message: Message, state: FSMContext):
     """Начинает процесс добавления пикселя в систему"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     m1 = await message.answer("Введите Pixel ID:")
     m2 = await message.answer("❌ В любой момент нажмите 'Отмена', чтобы выйти", reply_markup=cancel_kb)

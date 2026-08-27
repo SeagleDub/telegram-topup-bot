@@ -7,7 +7,8 @@ from aiogram.fsm.context import FSMContext
 import gspread
 import bugsnag
 from config import GOOGLE_SHEET_ID, ADMIN_ID, TEAMLEADER_ID
-from utils import is_user_allowed, last_messages, delete_last_messages
+from utils import last_messages, delete_last_messages
+from middlewares import admin_only
 from keyboards import cancel_kb, get_menu_keyboard
 from states import Form
 
@@ -66,26 +67,21 @@ def get_multiple_expenses_data(user_ids: list) -> dict:
 @router.message(F.text == "💸 Получить данные по расходу (multicards + расходники)")
 async def get_expense_info(message: Message):
     """Обрабатывает запрос на получение данных по расходу"""
-    if not is_user_allowed(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
 
     user_id = message.from_user.id
     expense_info = get_expense_data(user_id)
     await message.answer(expense_info)
 
 @router.message(F.text == "📊 Получить расход по байеру")
+@admin_only
 async def get_buyer_expense_start(message: Message, state: FSMContext):
     """Начинает процесс получения расхода по байеру (только для админов)"""
-    if message.from_user.id != ADMIN_ID and message.from_user.id != TEAMLEADER_ID:
-        await message.answer("❌ У вас нет доступа к этой функции.")
-        return
-
     m1 = await message.answer("Введите ID байера (или несколько ID через запятую) для получения данных по расходу:", reply_markup=cancel_kb)
     last_messages[message.from_user.id] = [m1.message_id]
     await state.set_state(Form.entering_buyer_id)
 
 @router.message(Form.entering_buyer_id)
+@admin_only
 async def process_buyer_id(message: Message, state: FSMContext):
     """Обрабатывает введенный ID байера (или несколько ID через запятую)"""
     await delete_last_messages(message.from_user.id, message.bot)
