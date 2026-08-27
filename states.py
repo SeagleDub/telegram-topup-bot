@@ -27,9 +27,6 @@ class Form(StatesGroup):
     unicalization_copies = State()
     unicalization_archives = State()
 
-    # Рассылка
-    broadcast_collecting = State()
-
     # Пиксель система
     entering_pixel_id = State()
     entering_pixel_key = State()
@@ -57,13 +54,12 @@ class Form(StatesGroup):
     selecting_auto_renewal_numbers = State()
     confirming_auto_renewal = State()
 
-    # Действия с картами
-    card_actions_choose_bank = State()
+    # Действия с картами (eCards)
     card_actions_enter_number = State()
     card_actions_choose_action = State()
-    card_actions_enter_limit = State()
     card_actions_confirm_block = State()
-    # Выбор периода для расхода/транзакций по группе (eCards)
-    card_actions_choose_period = State()
-    card_actions_enter_period = State()
+
+    # Расход по группе (eCards): выбор периода
+    group_expenses_choose_period = State()
+    group_expenses_enter_period = State()
 

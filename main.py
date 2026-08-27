@@ -20,7 +20,6 @@ from handlers import (
     landing,
     unicalization,
     pixel,
-    broadcast,
     translation,
     expenses,
     google_sms,
@@ -44,7 +43,6 @@ async def main():
     dp.include_router(landing.router)
     dp.include_router(unicalization.router)
     dp.include_router(pixel.router)
-    dp.include_router(broadcast.router)
     dp.include_router(translation.router)
     dp.include_router(expenses.router)
     dp.include_router(google_sms.router)

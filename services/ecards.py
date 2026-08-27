@@ -3,7 +3,7 @@
 
 Авторизация статическая: заголовок Authorization: Bearer <ECARDS_TOKEN>.
 В документации (API.md) нет эндпоинта логина, поэтому токен считается
-долгоживущим и хранится в .env (как ADSCARD_TOKEN).
+долгоживущим и хранится в .env.
 
 Массивные query-параметры передаются в нотации filterId[]=1&filterId[]=2
 (список кортежей в aiohttp). Даты — ISO 8601 (UTC, суффикс Z).
@@ -350,7 +350,7 @@ async def get_cards(search: str | None = None) -> dict | list:
 
 
 async def find_card_by_number(number: str) -> dict | None:
-    """Ищет карту по полному номеру в GET /card (как adscard/multicards).
+    """Ищет карту по полному номеру в GET /card.
 
     Контракт: {"card": <карта>, "multiple": bool} | {"error": ...} | None.
     Пробуем сузить выборку через search, при необходимости листаем страницы.

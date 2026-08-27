@@ -14,18 +14,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 LUBOYDOMEN_API_TOKEN = os.getenv("LUBOYDOMEN_API_TOKEN")
 
-# AdsCard API (банк для функции "Действия с картами")
-ADSCARD_TOKEN = os.getenv("ADSCARD_TOKEN")            # Bearer-токен (заголовок Application-Authorization)
-ADSCARD_AUTH_TOKEN = os.getenv("ADSCARD_AUTH_TOKEN")  # auth_token в теле запроса
-
-# MultiCards API (банк для функции "Действия с картами")
-# Токен получается логином по email/password, кэшируется в памяти сервиса.
-MULTICARDS_EMAIL = os.getenv("MULTICARDS_EMAIL")
-MULTICARDS_PASSWORD = os.getenv("MULTICARDS_PASSWORD")
-
-# eCards API (банк для функции "Действия с картами" + расход по группе).
+# eCards API (единственный банк: "Действия с картами" + расход по группе).
 # Авторизация статическая: заголовок Authorization: Bearer <ECARDS_TOKEN>.
-# Базовый URL захардкожен в services/ecards.py (как у AdsCard).
+# Базовый URL захардкожен в services/ecards.py.
 ECARDS_TOKEN = os.getenv("ECARDS_TOKEN")
 
 # ID пользователей

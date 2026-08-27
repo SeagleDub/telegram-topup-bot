@@ -9,10 +9,10 @@ from config import ADMIN_ID, TEAMLEADER_ID
 menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
-    [KeyboardButton(text="💸 Получить данные по расходу")],
+    [KeyboardButton(text="💸 Получить данные по расходу (multicards + расходники)")],
     # [KeyboardButton(text="📱 Получить SMS Google Ads")],  # временно скрыто
     # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
-    [KeyboardButton(text="💳 Действия с картами")],
+    [KeyboardButton(text="💳 Действия с картами (ecards)")],
     [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
@@ -21,15 +21,14 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 ])
 
 menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
-    [KeyboardButton(text="📢 Сделать рассылку")],
     [KeyboardButton(text="💰 Заказать пополнение")],
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
-    [KeyboardButton(text="💸 Получить данные по расходу")],
+    [KeyboardButton(text="💸 Получить данные по расходу (multicards + расходники)")],
     [KeyboardButton(text="📊 Получить расход по байеру")],
     # [KeyboardButton(text="📱 Получить SMS Google Ads")],  # временно скрыто
     # [KeyboardButton(text="📞 Купить номера"), KeyboardButton(text="📋 Список номеров")],  # временно скрыто
     # [KeyboardButton(text="🔄 Автопродление номеров")],  # временно скрыто
-    [KeyboardButton(text="💳 Действия с картами")],
+    [KeyboardButton(text="💳 Действия с картами (ecards)")],
     [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
@@ -131,43 +130,16 @@ def get_purchase_country_keyboard():
     ])
 
 
-def get_card_bank_keyboard():
-    """Клавиатура выбора банка для действий с картами"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏦 AdsCard", callback_data="card_bank:adscard")],
-        [InlineKeyboardButton(text="🃏 MultiCards", callback_data="card_bank:multicards")],
-        [InlineKeyboardButton(text="🏦 eCards", callback_data="card_bank:ecards")]
-    ])
+def get_card_action_keyboard():
+    """Клавиатура выбора действия с картой (eCards).
 
-
-def get_card_action_keyboard(bank: str = "adscard"):
-    """Клавиатура выбора действия с картой (зависит от банка).
-
-    У MultiCards лимит раздельный: глобальный и дневной. У AdsCard — один лимит.
-    У eCards смены лимита нет в API (см. API.md) — только блок и транзакции.
+    Смены лимита в API eCards нет (см. API.md) — доступны блокировка,
+    транзакции и 3DS-код из ленты уведомлений.
     """
-    if bank == "multicards":
-        limit_buttons = [
-            [InlineKeyboardButton(text="💵 Глобальный лимит", callback_data="card_action:limit_total")],
-            [InlineKeyboardButton(text="📅 Дневной лимит", callback_data="card_action:limit_daily")],
-        ]
-    elif bank == "ecards":
-        limit_buttons = []
-    else:
-        limit_buttons = [
-            [InlineKeyboardButton(text="💵 Поменять лимит", callback_data="card_action:limit")],
-        ]
-
-    # У eCards есть 3DS-коды (из ленты уведомлений).
-    extra = []
-    if bank == "ecards":
-        extra = [[InlineKeyboardButton(text="🔐 3DS код", callback_data="card_action:otp")]]
-
     return InlineKeyboardMarkup(inline_keyboard=[
-        *limit_buttons,
         [InlineKeyboardButton(text="🚫 Заблокировать", callback_data="card_action:block")],
         [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_action:transactions")],
-        *extra,
+        [InlineKeyboardButton(text="🔐 3DS код", callback_data="card_action:otp")],
     ])
 
 
@@ -186,27 +158,23 @@ def get_tx_pagination_keyboard(page: int, pages: int):
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
-def get_period_keyboard():
-    """Выбор периода для расхода/транзакций: пресеты + свой диапазон."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📅 Сегодня", callback_data="period:today"),
-         InlineKeyboardButton(text="📅 Вчера", callback_data="period:yesterday")],
-        [InlineKeyboardButton(text="📅 Текущий месяц", callback_data="period:month")],
-        [InlineKeyboardButton(text="📆 Прошлый месяц", callback_data="period:prev")],
-        [InlineKeyboardButton(text="🗓 7 дней", callback_data="period:7"),
-         InlineKeyboardButton(text="🗓 30 дней", callback_data="period:30")],
-        [InlineKeyboardButton(text="✍️ Свой период", callback_data="period:custom")],
-    ])
-
-
 def get_ecards_group_keyboard():
     """Действия eCards по картам байера (технически по его группе, tg_id в названии).
 
-    Подписи без «по группе» — по требованию.
+    Расход вынесен в отдельный пункт меню «💸 Расход по группе».
     """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💸 Расход", callback_data="card_group:spend")],
         [InlineKeyboardButton(text="📜 Последние транзакции", callback_data="card_group:transactions")],
+    ])
+
+
+def get_group_expenses_period_keyboard():
+    """Выбор периода для «💸 Расход по группе»."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 Сегодня", callback_data="gexp:today"),
+         InlineKeyboardButton(text="📅 Вчера", callback_data="gexp:yesterday")],
+        [InlineKeyboardButton(text="💰 За зп период", callback_data="gexp:cycle")],
+        [InlineKeyboardButton(text="✍️ Свой диапазон", callback_data="gexp:custom")],
     ])
 
 

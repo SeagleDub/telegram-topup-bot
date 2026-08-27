@@ -63,7 +63,7 @@ def get_multiple_expenses_data(user_ids: list) -> dict:
         bugsnag.notify(e, meta_data={"context": "get_multiple_expenses_data", "user_ids": user_ids})
         return {}
 
-@router.message(F.text == "💸 Получить данные по расходу")
+@router.message(F.text == "💸 Получить данные по расходу (multicards + расходники)")
 async def get_expense_info(message: Message):
     """Обрабатывает запрос на получение данных по расходу"""
     if not is_user_allowed(message.from_user.id):
