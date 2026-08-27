@@ -73,6 +73,11 @@ def _bucket_for(event: TelegramObject, data: Dict[str, Any]) -> str:
         state = data.get("raw_state")
         if state and "card_actions_enter_number" in str(state):
             return "card_lookup"
+        # Запасной признак на случай, если состояние недоступно: строка из
+        # 12+ цифр — это номер карты, и перебор надо тормозить независимо от
+        # того, дошло ли до нас состояние FSM.
+        if sum(c.isdigit() for c in text) >= 12:
+            return "card_lookup"
         return "default"
 
     return "default"
@@ -99,7 +104,7 @@ class ThrottleMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        user = data.get("event_from_user")
+        user = data.get("event_from_user") or getattr(event, "from_user", None)
         if user is None:
             return await handler(event, data)
 

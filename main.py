@@ -37,13 +37,26 @@ async def main():
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Middleware выполняются до любого хендлера и в этом порядке.
-    # Сначала аутентификация: чужой не должен даже расходовать лимит частоты.
-    # Регистрируем и на message, и на callback_query — инлайн-кнопки это
-    # отдельный тип события, и проверка на message его не покрывает.
+    # ВАЖНО: именно outer_middleware, а не middleware.
+    #
+    # В aiogram 3 inner-middleware (observer.middleware) применяется только к
+    # хендлерам, зарегистрированным на этом же обсервере. Собственных хендлеров
+    # у Dispatcher нет — все они в дочерних роутерах, — поэтому inner-вариант
+    # не выполнился бы ни разу, и бот остался бы полностью открытым, выглядя
+    # при этом защищённым.
+    #
+    # outer_middleware оборачивает распространение события целиком, включая
+    # все дочерние роутеры, и срабатывает до фильтров хендлеров.
+    #
+    # Регистрируем на message и callback_query: инлайн-кнопки — отдельный тип
+    # события, проверка только на message их не покрывает. Других типов
+    # обновлений бот не обрабатывает.
+    #
+    # Порядок: сначала аутентификация — посторонний не должен даже расходовать
+    # лимит частоты.
     for observer in (dp.message, dp.callback_query):
-        observer.middleware(AuthMiddleware())
-        observer.middleware(ThrottleMiddleware())
+        observer.outer_middleware(AuthMiddleware())
+        observer.outer_middleware(ThrottleMiddleware())
 
     # Подключаем роутеры обработчиков
     dp.include_router(common.router)

@@ -50,10 +50,12 @@ class AuthMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        user = data.get("event_from_user")
+        # event_from_user кладёт UserContextMiddleware самого aiogram. Берём его,
+        # но не полагаемся на него безоговорочно: если поля нет, читаем
+        # from_user у самого события.
+        user = data.get("event_from_user") or getattr(event, "from_user", None)
         if user is None:
-            # Событие без пользователя (например, служебное) — не пропускаем:
-            # проверить некого, значит подтвердить право доступа нельзя.
+            # Проверить некого — значит подтвердить право доступа нельзя.
             logger.warning("[auth] событие без пользователя отклонено: %s", type(event).__name__)
             return None
 
