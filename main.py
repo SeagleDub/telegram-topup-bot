@@ -29,10 +29,14 @@ from handlers import (
     card_group_expenses
 )
 
-async def main():
-    """Главная функция запуска бота"""
-    # Создаем экземпляры бота и диспетчера
-    bot = Bot(token=API_TOKEN)
+def create_dispatcher() -> Dispatcher:
+    """Собирает диспетчер: middleware + роутеры.
+
+    Вынесено из main() отдельной функцией, чтобы обвязку можно было проверить
+    без запуска polling: подключение middleware — то место, где уже пряталась
+    ошибка (inner вместо outer), и оно должно быть тестируемо без обращения к
+    Telegram API.
+    """
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
@@ -70,6 +74,14 @@ async def main():
     dp.include_router(auto_renewal.router)
     dp.include_router(card_actions.router)
     dp.include_router(card_group_expenses.router)
+
+    return dp
+
+
+async def main():
+    """Главная функция запуска бота"""
+    bot = Bot(token=API_TOKEN)
+    dp = create_dispatcher()
 
     # Удаляем вебхук и запускаем polling
     await bot.delete_webhook(drop_pending_updates=True)

@@ -15,6 +15,7 @@
 Политика fail-closed: неизвестный пользователь не проходит. Отказ Google
 Sheets не блокирует всех, пока жив кэш (см. utils.get_whitelist).
 """
+import functools
 import logging
 from typing import Any, Awaitable, Callable, Dict
 
@@ -95,6 +96,13 @@ def admin_only(handler):
     существенна: наличие проверки «пользователь известен» не означает, что у
     него есть право на административное действие.
     """
+    # functools.wraps обязателен, а не косметика: aiogram определяет, какие
+    # аргументы передать хендлеру, через inspect.getfullargspec, раскручивая
+    # обёртки по атрибуту __wrapped__ (его выставляет именно wraps). Без него
+    # aiogram видит сигнатуру обёртки с **kwargs, считает что хендлер примет
+    # всё, и передаёт весь контекст (bot, state, event_router, ...). Хендлер с
+    # одним параметром падает на этом с TypeError, а кнопка молча не работает.
+    @functools.wraps(handler)
     async def wrapper(event: TelegramObject, *args, **kwargs):
         user = getattr(event, "from_user", None)
         if user is None or not is_admin(user.id):
@@ -110,6 +118,4 @@ def admin_only(handler):
             return None
         return await handler(event, *args, **kwargs)
 
-    wrapper.__name__ = getattr(handler, "__name__", "wrapper")
-    wrapper.__doc__ = handler.__doc__
     return wrapper
