@@ -19,6 +19,22 @@ LUBOYDOMEN_API_TOKEN = os.getenv("LUBOYDOMEN_API_TOKEN")
 # Базовый URL захардкожен в services/ecards.py.
 ECARDS_TOKEN = os.getenv("ECARDS_TOKEN")
 
+# Cloudflare: хранилище видео и Mini App для загрузки.
+#
+# Загрузка идёт браузером напрямую в R2, минуя бота: Bot API не отдаёт файлы
+# больше 20 МБ, а исходники доходят до 250 МБ. Бот забирает готовое задание из
+# R2 сам — входящих соединений на хост при этом не появляется.
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
+R2_BUCKET = os.getenv("R2_BUCKET")
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
+
+# Адрес Worker'а: он же отдаёт страницу Mini App, он же принимает синхронизацию
+# вайтлиста. Токен — общий секрет только для синхронизации, не токен Telegram.
+CF_WORKER_URL = os.getenv("CF_WORKER_URL")
+KV_SYNC_TOKEN = os.getenv("KV_SYNC_TOKEN")
+
 # ID пользователей
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))

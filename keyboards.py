@@ -4,6 +4,11 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from config import ADMIN_ID, TEAMLEADER_ID
 
+# Текст кнопки вынесен в константу: он используется и в фильтре хендлера,
+# и в определении бакета троттлинга. Расхождение строк тихо отключило бы
+# либо кнопку, либо лимит частоты.
+VIDEO_CLOUD_TEXT = "🎬 Видео для Cloud"
+
 # Основные клавиатуры
 # Часть пунктов временно скрыта (закомментирована) — обработчики остаются рабочими.
 menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
@@ -16,6 +21,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
+    [KeyboardButton(text=VIDEO_CLOUD_TEXT)],
     # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
@@ -31,6 +37,7 @@ menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💸 Расход по группе")],
     [KeyboardButton(text="🌐 Создать/починить лендинг")],
     [KeyboardButton(text="🖼️ Уникализатор")],
+    [KeyboardButton(text=VIDEO_CLOUD_TEXT)],
     # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 

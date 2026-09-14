@@ -18,6 +18,8 @@ from typing import Any, Awaitable, Callable, Deque, Dict, Tuple
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from keyboards import VIDEO_CLOUD_TEXT
+
 logger = logging.getLogger(__name__)
 
 # (лимит действий, окно в секундах)
@@ -32,6 +34,7 @@ LIMITS: Dict[str, Tuple[int, int]] = {
     "purchase": (3, 60),        # покупка номеров — тратит деньги
     "sms": (10, 60),            # запрос SMS
     "group_expenses": (10, 60),  # расход по группе — тяжёлый запрос с пагинацией
+    "video_cloud": (10, 60),     # открытие загрузчика видео
 }
 
 THROTTLE_TEXT = "⏳ Слишком часто. Подождите немного и повторите."
@@ -45,6 +48,11 @@ _TEXT_BUCKETS = {
     "📋 Список номеров": "purchase",
     "📱 Получить SMS Google Ads": "sms",
     "💸 Расход по группе": "group_expenses",
+    # Здесь ограничивается только открытие Mini App. Сама загрузка идёт мимо
+    # бота, напрямую в R2, поэтому её частоту ограничивает Worker: см.
+    # RATE_LIMIT_MAX в cloudflare/src/index.js. Этот бакет тот лимит не
+    # заменяет и заменить не может.
+    VIDEO_CLOUD_TEXT: "video_cloud",
 }
 
 # Префиксы callback_data -> бакет.

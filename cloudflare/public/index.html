@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Видео для Cloud</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #000000);
+    --hint: var(--tg-theme-hint-color, #707579);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --button: var(--tg-theme-button-color, #2481cc);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --section: var(--tg-theme-secondary-bg-color, #f4f4f5);
+    --danger: #e53935;
+    --ok: #2e9c4a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 { font-size: 20px; margin: 0 0 6px; font-weight: 600; }
+  .sub { color: var(--hint); margin: 0 0 20px; font-size: 14px; }
+
+  .card {
+    background: var(--section);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+
+  .drop {
+    border: 2px dashed var(--hint);
+    border-radius: 12px;
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, opacity .15s;
+  }
+  .drop:active { opacity: .7; }
+  .drop.has-file { border-style: solid; border-color: var(--button); text-align: left; }
+
+  .drop-icon { font-size: 30px; line-height: 1; margin-bottom: 8px; }
+  .drop-main { font-weight: 500; }
+  .drop-hint { color: var(--hint); font-size: 13px; margin-top: 4px; }
+
+  input[type=file] { display: none; }
+
+  button {
+    width: 100%;
+    padding: 14px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--section);
+    overflow: hidden;
+    margin: 12px 0 8px;
+  }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--button); transition: width .2s; }
+
+  .status { font-size: 14px; color: var(--hint); text-align: center; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--ok); }
+
+  .note { font-size: 13px; color: var(--hint); margin-top: 18px; }
+  .note b { color: var(--text); font-weight: 600; }
+
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>Видео для Cloud</h1>
+<p class="sub">Загрузите ролик — бот вернёт ссылку на версию с autostart.</p>
+
+<div id="app" hidden>
+  <label class="drop" id="drop" for="file">
+    <div id="dropEmpty">
+      <div class="drop-icon">🎬</div>
+      <div class="drop-main">Выбрать видео</div>
+      <div class="drop-hint">MP4, MOV, до 300 МБ</div>
+    </div>
+    <div id="dropFilled" hidden>
+      <div class="drop-main" id="fileName"></div>
+      <div class="drop-hint" id="fileSize"></div>
+    </div>
+  </label>
+  <input type="file" id="file" accept="video/*">
+
+  <div class="bar" id="bar" hidden><i id="barFill"></i></div>
+  <p class="status" id="status" hidden></p>
+
+  <div class="card" style="margin-top:14px">
+    <button id="send" disabled>Загрузить</button>
+  </div>
+
+  <p class="note">
+    Итоговый файл: <b>до 29 секунд</b>, ширина до 720 px, H.264.
+    Ролики длиннее будут обрезаны — это требование autostart.
+  </p>
+</div>
+
+<p class="status err" id="fatal" hidden></p>
+
+<script>
+(function () {
+  "use strict";
+
+  var tg = window.Telegram && window.Telegram.WebApp;
+
+  var els = {
+    app: document.getElementById("app"),
+    fatal: document.getElementById("fatal"),
+    drop: document.getElementById("drop"),
+    dropEmpty: document.getElementById("dropEmpty"),
+    dropFilled: document.getElementById("dropFilled"),
+    file: document.getElementById("file"),
+    fileName: document.getElementById("fileName"),
+    fileSize: document.getElementById("fileSize"),
+    send: document.getElementById("send"),
+    bar: document.getElementById("bar"),
+    barFill: document.getElementById("barFill"),
+    status: document.getElementById("status")
+  };
+
+  // Держим в одном месте: значение обязано совпадать с MAX_UPLOAD_BYTES в
+  // Worker'е. Проверка здесь — только ради вменяемого сообщения; настоящий
+  // отказ выносит Worker, клиентскую проверку обойти тривиально.
+  var MAX_BYTES = 300 * 1024 * 1024;
+
+  var chosen = null;
+  var busy = false;
+
+  function fatal(msg) {
+    els.fatal.textContent = msg;
+    els.fatal.hidden = false;
+    els.app.hidden = true;
+  }
+
+  function setStatus(text, kind) {
+    els.status.textContent = text;
+    els.status.className = "status" + (kind ? " " + kind : "");
+    els.status.hidden = !text;
+  }
+
+  function humanSize(bytes) {
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " КБ";
+    return (bytes / 1024 / 1024).toFixed(1) + " МБ";
+  }
+
+  // Страница открывается только внутри Telegram: без initData подтвердить,
+  // кто пользователь, невозможно, и Worker всё равно ответит отказом.
+  if (!tg || !tg.initData) {
+    fatal("Откройте страницу через кнопку в боте.");
+    return;
+  }
+
+  tg.ready();
+  tg.expand();
+  els.app.hidden = false;
+
+  els.file.addEventListener("change", function () {
+    var f = els.file.files && els.file.files[0];
+    if (!f) return;
+
+    if (f.size > MAX_BYTES) {
+      setStatus("Файл больше 300 МБ. Сожмите или обрежьте перед загрузкой.", "err");
+      els.file.value = "";
+      return;
+    }
+
+    chosen = f;
+    els.fileName.textContent = f.name;
+    els.fileSize.textContent = humanSize(f.size);
+    els.dropEmpty.hidden = true;
+    els.dropFilled.hidden = false;
+    els.drop.classList.add("has-file");
+    els.send.disabled = false;
+    setStatus("");
+  });
+
+  els.send.addEventListener("click", function () {
+    if (!chosen || busy) return;
+    upload(chosen);
+  });
+
+  function upload(file) {
+    busy = true;
+    els.send.disabled = true;
+    els.file.disabled = true;
+    setStatus("Готовлю загрузку…");
+
+    fetch("/api/upload-url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: tg.initData, size: file.size })
+    })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          if (!r.ok) throw new Error(body && body.error ? body.error : "Ошибка " + r.status);
+          return body;
+        });
+      })
+      .then(function (data) {
+        return put(data.uploadUrl, data.contentType, file);
+      })
+      .then(function () {
+        els.bar.hidden = true;
+        setStatus("✅ Загружено. Бот пришлёт ссылку через минуту.", "ok");
+        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+        setTimeout(function () { tg.close(); }, 2500);
+      })
+      .catch(function (e) {
+        els.bar.hidden = true;
+        setStatus(e.message || "Не удалось загрузить", "err");
+        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("error");
+        busy = false;
+        els.send.disabled = false;
+        els.file.disabled = false;
+      });
+  }
+
+  /**
+   * Загрузка через XMLHttpRequest, а не fetch: прогресс отправки доступен
+   * только здесь. Для файла на 250 МБ полоса прогресса — не украшение, без неё
+   * человек не отличит идущую загрузку от зависшей.
+   *
+   * Content-Type обязан совпасть с подписанным в Worker'е до символа, иначе R2
+   * отвергнет подпись. Content-Length браузер выставляет сам по размеру тела —
+   * тот же размер, что отправлен в /api/upload-url.
+   */
+  function put(url, contentType, file) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("PUT", url, true);
+      xhr.setRequestHeader("Content-Type", contentType);
+
+      els.bar.hidden = false;
+      els.barFill.style.width = "0%";
+
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.round((e.loaded / e.total) * 100);
+        els.barFill.style.width = pct + "%";
+        setStatus("Загружаю… " + pct + "%");
+      };
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error("Хранилище отклонило файл (" + xhr.status + ")"));
+      };
+      xhr.onerror = function () { reject(new Error("Обрыв связи при загрузке")); };
+      xhr.onabort = function () { reject(new Error("Загрузка отменена")); };
+      xhr.ontimeout = function () { reject(new Error("Загрузка не уложилась во время")); };
+
+      xhr.send(file);
+    });
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,31 @@
+name = "video-cloud"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Статическая страница Mini App. Запрос, не начинающийся с /api/, уходит в
+# env.ASSETS — см. обработчик fetch в src/index.js.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Публичные значения. Секретами не являются: идентификатор аккаунта и имя
+# бакета сами по себе доступа не дают.
+[vars]
+R2_ACCOUNT_ID = "047a97155952717c0bb17f13f718542e"
+R2_BUCKET = "videostt"
+
+# Вайтлист и счётчики частоты.
+#
+# binding — это имя переменной в коде (env.ACL), а НЕ имя namespace в дашборде.
+# Менять его можно только вместе с src/index.js: несовпадение проявится не при
+# деплое, а первым запросом в рантайме.
+# id взят из вывода: npx wrangler kv namespace create video_acl
+[[kv_namespaces]]
+binding = "ACL"
+id = "4f5f26df7ac54b2784b4c53d3fd81fca"
+
+# Секреты в этот файл не пишутся — он в git. Задаются командами:
+#   npx wrangler secret put TG_SECRET_KEY
+#   npx wrangler secret put R2_ACCESS_KEY_ID
+#   npx wrangler secret put R2_SECRET_ACCESS_KEY
+#   npx wrangler secret put KV_SYNC_TOKEN
