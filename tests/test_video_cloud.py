@@ -197,6 +197,11 @@ class TranscodeCommandTest(unittest.TestCase):
         self.assertEqual(self._value_after("-maxrate"), "2500k")
         self.assertEqual(self._value_after("-bufsize"), "5000k")
 
+    def test_thread_cap(self):
+        # Без потолка libx264 занимает машину целиком, и бот выглядит зависшим.
+        from services.video import FFMPEG_THREADS
+        self.assertEqual(self._value_after("-threads"), str(FFMPEG_THREADS))
+
     def test_runs_under_nice(self):
         # Без nice транскод конкурирует с ботом за процессор на равных.
         self.assertEqual(self.cmd[:3], ["nice", "-n", "19"])

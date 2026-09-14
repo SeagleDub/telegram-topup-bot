@@ -95,9 +95,14 @@ async def _process(bot: Bot, obj: r2.IncomingObject) -> None:
     """Обрабатывает одно задание от скачивания до ответа пользователю."""
     # Повторная проверка доступа. Worker проверил вайтлист при выдаче ссылки,
     # но между загрузкой и обработкой человека могли убрать из таблицы.
-    # Проверка дешёвая (кэш в памяти), а пропуск — это работа в пользу того,
-    # кому доступ уже закрыт.
-    if not is_user_allowed(obj.user_id):
+    # Пропуск — это работа в пользу того, кому доступ уже закрыт.
+    #
+    # Через executor: обычно это попадание в кэш, но по истечении TTL
+    # is_user_allowed синхронно идёт в Google Sheets, и прямой вызов из
+    # корутины остановил бы event loop на всё время запроса.
+    loop = asyncio.get_running_loop()
+    allowed = await loop.run_in_executor(None, is_user_allowed, obj.user_id)
+    if not allowed:
         logger.warning(
             "[video-queue] задание от пользователя вне вайтлиста отброшено: user_id=%s",
             obj.user_id,

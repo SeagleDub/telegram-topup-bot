@@ -15,7 +15,16 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-from config import API_TOKEN
+from config import (
+    API_TOKEN,
+    CF_WORKER_URL,
+    KV_SYNC_TOKEN,
+    R2_ACCESS_KEY_ID,
+    R2_ACCOUNT_ID,
+    R2_BUCKET,
+    R2_PUBLIC_BASE_URL,
+    R2_SECRET_ACCESS_KEY,
+)
 from middlewares import AuthMiddleware, ThrottleMiddleware
 from handlers import (
     common,
@@ -96,6 +105,28 @@ def start_video_background_tasks(bot: Bot) -> List[asyncio.Task]:
     задачи не стартуют, а кнопка в меню честно отвечает «недоступно»
     (см. handlers/video_cloud.py).
     """
+    # Без полной настройки Cloudflare задачам нечего делать: опросчик будет
+    # падать на каждом цикле, синк вайтлиста — на каждой попытке, и лог
+    # заполнится ошибками, за которыми потеряется всё остальное. Пока фича не
+    # настроена, она должна быть не сломанной, а выключенной.
+    missing = [
+        name for name, value in (
+            ("R2_ACCOUNT_ID", R2_ACCOUNT_ID),
+            ("R2_ACCESS_KEY_ID", R2_ACCESS_KEY_ID),
+            ("R2_SECRET_ACCESS_KEY", R2_SECRET_ACCESS_KEY),
+            ("R2_BUCKET", R2_BUCKET),
+            ("R2_PUBLIC_BASE_URL", R2_PUBLIC_BASE_URL),
+            ("CF_WORKER_URL", CF_WORKER_URL),
+            ("KV_SYNC_TOKEN", KV_SYNC_TOKEN),
+        ) if not value
+    ]
+    if missing:
+        logger.warning(
+            "[startup] обработка видео выключена: не заданы %s",
+            ", ".join(missing),
+        )
+        return []
+
     try:
         video.ensure_tools_available()
     except video.VideoError as e:

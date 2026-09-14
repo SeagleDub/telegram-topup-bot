@@ -43,8 +43,13 @@ async def push_whitelist_once() -> int:
             "не заданы CF_WORKER_URL или KV_SYNC_TOKEN — синхронизация невозможна"
         )
 
+    # get_whitelist синхронный и при истёкшем кэше лезет в Google Sheets по
+    # сети. Прямой вызов из корутины остановил бы event loop на всё время
+    # запроса — а это не микросекунды: gspread создаёт сервис-аккаунт и делает
+    # HTTP-запрос. Бот на это время перестаёт отвечать всем.
+    loop = asyncio.get_running_loop()
     try:
-        ids = sorted(get_whitelist())
+        ids = sorted(await loop.run_in_executor(None, get_whitelist))
     except WhitelistUnavailable as e:
         raise WhitelistSyncError(f"вайтлист недоступен: {e}") from e
 
