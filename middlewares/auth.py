@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from utils import is_admin, is_user_allowed
+from utils import can_view_buyer_expenses, is_admin, is_user_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -88,34 +88,52 @@ async def _deny(event: TelegramObject) -> None:
         logger.warning("[auth] не удалось отправить отказ: %s: %s", type(e).__name__, e)
 
 
-def admin_only(handler):
-    """Декоратор: пускает только админа и тимлидера.
+def require(predicate: Callable[[int], bool], permission: str):
+    """Строит декоратор авторизации по предикату права.
 
-    Аутентификацию (кто это вообще) делает AuthMiddleware. Этот декоратор —
-    про авторизацию: какого уровня доступ нужен конкретному действию. Разница
+    Аутентификацию (кто это вообще) делает AuthMiddleware. Декораторы отсюда —
+    про авторизацию: какое право нужно конкретному действию. Разница
     существенна: наличие проверки «пользователь известен» не означает, что у
-    него есть право на административное действие.
-    """
-    # functools.wraps обязателен, а не косметика: aiogram определяет, какие
-    # аргументы передать хендлеру, через inspect.getfullargspec, раскручивая
-    # обёртки по атрибуту __wrapped__ (его выставляет именно wraps). Без него
-    # aiogram видит сигнатуру обёртки с **kwargs, считает что хендлер примет
-    # всё, и передаёт весь контекст (bot, state, event_router, ...). Хендлер с
-    # одним параметром падает на этом с TypeError, а кнопка молча не работает.
-    @functools.wraps(handler)
-    async def wrapper(event: TelegramObject, *args, **kwargs):
-        user = getattr(event, "from_user", None)
-        if user is None or not is_admin(user.id):
-            uid = getattr(user, "id", None)
-            logger.warning(
-                "[auth] админское действие отклонено: user_id=%s handler=%s",
-                uid, getattr(handler, "__name__", "?"),
-            )
-            if isinstance(event, CallbackQuery):
-                await event.answer("❌ У вас нет доступа к этой функции.", show_alert=True)
-            elif isinstance(event, Message):
-                await event.answer("❌ У вас нет доступа к этой функции.")
-            return None
-        return await handler(event, *args, **kwargs)
+    него есть право на это действие.
 
-    return wrapper
+    Фабрика, а не отдельные декораторы с копией тела: прав стало больше одного,
+    а разъехавшиеся копии проверки — это ровно тот способ, которым появляются
+    незакрытые хендлеры.
+
+    `permission` идёт только в лог — по нему видно, какого именно права не
+    хватило, без чтения кода хендлера.
+    """
+    def decorator(handler):
+        # functools.wraps обязателен, а не косметика: aiogram определяет, какие
+        # аргументы передать хендлеру, через inspect.getfullargspec, раскручивая
+        # обёртки по атрибуту __wrapped__ (его выставляет именно wraps). Без него
+        # aiogram видит сигнатуру обёртки с **kwargs, считает что хендлер примет
+        # всё, и передаёт весь контекст (bot, state, event_router, ...). Хендлер с
+        # одним параметром падает на этом с TypeError, а кнопка молча не работает.
+        @functools.wraps(handler)
+        async def wrapper(event: TelegramObject, *args, **kwargs):
+            user = getattr(event, "from_user", None)
+            if user is None or not predicate(user.id):
+                uid = getattr(user, "id", None)
+                logger.warning(
+                    "[auth] действие отклонено: user_id=%s право=%s handler=%s",
+                    uid, permission, getattr(handler, "__name__", "?"),
+                )
+                if isinstance(event, CallbackQuery):
+                    await event.answer("❌ У вас нет доступа к этой функции.", show_alert=True)
+                elif isinstance(event, Message):
+                    await event.answer("❌ У вас нет доступа к этой функции.")
+                return None
+            return await handler(event, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+# Полный административный доступ: одобрение заявок, автопродление номеров.
+admin_only = require(is_admin, "admin")
+
+# Чтение расхода по чужому ID. Шире, чем admin_only: сюда же попадает роль
+# «проверяющий расходы», у которой административных прав нет.
+expense_view_only = require(can_view_buyer_expenses, "view_buyer_expenses")

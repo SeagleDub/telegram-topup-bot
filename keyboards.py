@@ -2,7 +2,7 @@
 Клавиатуры для бота
 """
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from config import ADMIN_ID, TEAMLEADER_IDS
+from utils import can_view_buyer_expenses
 
 # Текст кнопки вынесен в константу: он используется и в фильтре хендлера,
 # и в определении бакета троттлинга. Расхождение строк тихо отключило бы
@@ -25,7 +25,7 @@ menu_kb_user = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     # [KeyboardButton(text="🌍 Перевод лендинга")]  # временно скрыто
 ])
 
-menu_kb_admin_teamleader = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
+menu_kb_with_buyer_expenses = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
     [KeyboardButton(text="💰 Заказать пополнение")],
     # [KeyboardButton(text="📂 Запросить расходники")],  # отключено
     [KeyboardButton(text="💸 Получить данные по расходу (multicards + расходники)")],
@@ -60,9 +60,15 @@ ready_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 ])
 
 def get_menu_keyboard(user_id: int):
-    """Возвращает подходящую клавиатуру в зависимости от типа пользователя"""
-    if user_id == ADMIN_ID or user_id in TEAMLEADER_IDS:
-        return menu_kb_admin_teamleader
+    """Возвращает клавиатуру по правам пользователя.
+
+    Расширенное меню отличается от обычного ровно одной кнопкой — «расход по
+    байеру», поэтому оно же выдаётся роли «проверяющий расходы». Условие взято
+    из utils, а не собрано здесь из списков ID: иначе меню и проверка в
+    хендлере разъезжаются, и кнопка либо видна без права, либо наоборот.
+    """
+    if can_view_buyer_expenses(user_id):
+        return menu_kb_with_buyer_expenses
     else:
         return menu_kb_user
 

@@ -19,6 +19,7 @@
 
 Запуск: .venv/bin/python -m unittest discover -s tests -v
 """
+import importlib
 import os
 import sys
 import unittest
@@ -190,3 +191,233 @@ class LinkedGroupTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# Роль «проверяющий расходы»
+#
+# Роль ниже админа по правам, и главный риск здесь — не отказ в доступе, а
+# тихое расширение: одна строчка в is_admin выдала бы ей одобрение заявок.
+# Поэтому проверяется в обе стороны — что право есть и что лишнего нет.
+# --------------------------------------------------------------------------- #
+ADMIN = 1
+TEAMLEADERS = (2, 3)
+VIEWERS = (7, 8)
+OUTSIDER = 99
+
+
+def _role_patches():
+    """Единая расстановка ролей для тестов: 1 админ, 2 тимлида, 2 проверяющих."""
+    return (
+        patch.object(utils, "ADMIN_ID", ADMIN),
+        patch.object(utils, "TEAMLEADER_IDS", TEAMLEADERS),
+        patch.object(utils, "EXPENSE_VIEWER_IDS", VIEWERS),
+        patch.object(utils, "ROLE_IDS", frozenset({ADMIN, *TEAMLEADERS, *VIEWERS})),
+    )
+
+
+class ExpenseViewerRoleTest(unittest.TestCase):
+    def setUp(self):
+        for p in _role_patches():
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_viewer_may_read_buyer_expenses(self):
+        for uid in VIEWERS:
+            self.assertTrue(utils.can_view_buyer_expenses(uid), uid)
+
+    def test_admin_and_teamleaders_keep_the_permission(self):
+        for uid in (ADMIN, *TEAMLEADERS):
+            self.assertTrue(utils.can_view_buyer_expenses(uid), uid)
+
+    def test_outsider_may_not_read_buyer_expenses(self):
+        self.assertFalse(utils.can_view_buyer_expenses(OUTSIDER))
+
+    def test_viewer_is_not_an_admin(self):
+        # Главная гарантия роли: одобрение заявок и автопродление остаются закрыты.
+        for uid in VIEWERS:
+            self.assertFalse(utils.is_admin(uid), uid)
+
+    def test_viewer_enters_the_bot_without_being_whitelisted(self):
+        # Вайтлист — это байеры из таблицы; роль задана руками в .env.
+        with patch.object(utils, "get_whitelist", side_effect=AssertionError("вайтлист не должен опрашиваться")):
+            for uid in VIEWERS:
+                self.assertTrue(utils.is_user_allowed(uid), uid)
+
+    def test_outsider_still_falls_through_to_the_whitelist(self):
+        with patch.object(utils, "get_whitelist", return_value={OUTSIDER}):
+            self.assertTrue(utils.is_user_allowed(OUTSIDER))
+        with patch.object(utils, "get_whitelist", return_value=set()):
+            self.assertFalse(utils.is_user_allowed(OUTSIDER))
+
+    def test_viewer_gets_no_request_notifications(self):
+        self.assertTrue(set(VIEWERS).isdisjoint(config.NOTIFY_IDS))
+
+
+class RoleOverlapTest(unittest.TestCase):
+    """config.py обязан падать на старте, если роли пересеклись.
+
+    Перезагружает модуль с подменённым окружением: проверять надо саму
+    загрузку конфига, а не копию его логики в тесте.
+    """
+
+    def _reload_config(self, **env):
+        with patch.dict(os.environ, env, clear=False):
+            importlib.reload(config)
+
+    def tearDown(self):
+        # Вернуть модуль к состоянию из настоящего .env, иначе испортим
+        # остальные тесты, читающие config.NOTIFY_IDS.
+        importlib.reload(config)
+
+    def test_viewer_listed_among_admins_aborts_startup(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reload_config(
+                ADMIN_ID="1", TEAMLEADER_IDS="2,3", EXPENSE_VIEWER_IDS="3,7",
+            )
+        self.assertIn("3", str(ctx.exception))
+
+    def test_viewer_equal_to_admin_aborts_startup(self):
+        with self.assertRaises(RuntimeError):
+            self._reload_config(
+                ADMIN_ID="1", TEAMLEADER_IDS="2", EXPENSE_VIEWER_IDS="1",
+            )
+
+    def test_disjoint_roles_load_fine(self):
+        self._reload_config(ADMIN_ID="1", TEAMLEADER_IDS="2,3", EXPENSE_VIEWER_IDS="7,8")
+        self.assertEqual(config.EXPENSE_VIEWER_IDS, (7, 8))
+        self.assertEqual(config.NOTIFY_IDS, (1, 2, 3))
+        self.assertEqual(config.ROLE_IDS, frozenset({1, 2, 3, 7, 8}))
+
+    def test_role_is_optional(self):
+        self._reload_config(ADMIN_ID="1", TEAMLEADER_IDS="2", EXPENSE_VIEWER_IDS="")
+        self.assertEqual(config.EXPENSE_VIEWER_IDS, ())
+
+    def test_live_config_has_no_overlap(self):
+        self.assertTrue(set(config.EXPENSE_VIEWER_IDS).isdisjoint(config.NOTIFY_IDS))
+
+
+class MenuKeyboardTest(unittest.TestCase):
+    BUYER_EXPENSE_BUTTON = "📊 Получить расход по байеру"
+
+    def setUp(self):
+        for p in _role_patches():
+            p.start()
+            self.addCleanup(p.stop)
+
+    @staticmethod
+    def _button_texts(kb):
+        return {btn.text for row in kb.keyboard for btn in row}
+
+    def test_viewer_sees_the_buyer_expense_button(self):
+        import keyboards
+        for uid in VIEWERS:
+            self.assertIn(self.BUYER_EXPENSE_BUTTON, self._button_texts(keyboards.get_menu_keyboard(uid)), uid)
+
+    def test_plain_user_does_not_see_it(self):
+        import keyboards
+        self.assertNotIn(self.BUYER_EXPENSE_BUTTON, self._button_texts(keyboards.get_menu_keyboard(OUTSIDER)))
+
+    def test_menu_matches_the_gate_exactly(self):
+        # Кнопка видна ровно тем, кого пропустит expense_view_only. Расхождение
+        # означает либо мёртвую кнопку, либо видимую функцию без права.
+        import keyboards
+        for uid in (ADMIN, *TEAMLEADERS, *VIEWERS, OUTSIDER):
+            visible = self.BUYER_EXPENSE_BUTTON in self._button_texts(keyboards.get_menu_keyboard(uid))
+            self.assertEqual(visible, utils.can_view_buyer_expenses(uid), uid)
+
+
+class FakeUser:
+    def __init__(self, user_id):
+        self.id = user_id
+        self.username = "tester"
+
+
+class FakeEvent:
+    """Событие без привязки к aiogram: декоратору достаточно from_user."""
+
+    def __init__(self, user_id):
+        self.from_user = FakeUser(user_id)
+
+
+class AuthDecoratorTest(unittest.IsolatedAsyncioTestCase):
+    """Гейт хендлера — реальная граница прав, а не предикат сам по себе.
+
+    Предикаты можно проверить и напрямую, но в проде вызывается декоратор:
+    если он навешан не тот, тесты предикатов этого не заметят.
+    """
+
+    def setUp(self):
+        for p in _role_patches():
+            p.start()
+            self.addCleanup(p.stop)
+        self.calls = []
+
+        async def handler(event, *args, **kwargs):
+            self.calls.append(event.from_user.id)
+            return "выполнено"
+
+        self.handler = handler
+
+    async def test_viewer_passes_the_expense_gate(self):
+        from middlewares.auth import expense_view_only
+        guarded = expense_view_only(self.handler)
+        for uid in VIEWERS:
+            self.assertEqual(await guarded(FakeEvent(uid)), "выполнено", uid)
+        self.assertEqual(self.calls, list(VIEWERS))
+
+    async def test_viewer_is_blocked_by_the_admin_gate(self):
+        # Ключевая гарантия: одобрение заявок и автопродление роли недоступны.
+        from middlewares.auth import admin_only
+        guarded = admin_only(self.handler)
+        for uid in VIEWERS:
+            self.assertIsNone(await guarded(FakeEvent(uid)), uid)
+        self.assertEqual(self.calls, [])
+
+    async def test_outsider_is_blocked_by_both_gates(self):
+        from middlewares.auth import admin_only, expense_view_only
+        for gate in (admin_only, expense_view_only):
+            self.assertIsNone(await gate(self.handler)(FakeEvent(OUTSIDER)))
+        self.assertEqual(self.calls, [])
+
+    async def test_admin_passes_both_gates(self):
+        from middlewares.auth import admin_only, expense_view_only
+        for gate in (admin_only, expense_view_only):
+            self.assertEqual(await gate(self.handler)(FakeEvent(ADMIN)), "выполнено")
+
+    async def test_event_without_user_is_rejected(self):
+        from middlewares.auth import expense_view_only
+        guarded = expense_view_only(self.handler)
+
+        class NoUser:
+            from_user = None
+
+        self.assertIsNone(await guarded(NoUser()))
+        self.assertEqual(self.calls, [])
+
+    async def test_wraps_preserves_signature_for_aiogram(self):
+        # Без functools.wraps aiogram передаёт хендлеру весь контекст и тот
+        # падает с TypeError, а кнопка молча перестаёт работать.
+        from middlewares.auth import expense_view_only
+        guarded = expense_view_only(self.handler)
+        self.assertIs(guarded.__wrapped__, self.handler)
+        self.assertEqual(guarded.__name__, self.handler.__name__)
+
+
+class ExpenseHandlerGateTest(unittest.TestCase):
+    """Проверка, что нужный декоратор реально навешан на нужные хендлеры."""
+
+    def test_buyer_expense_handlers_use_the_expense_gate(self):
+        import handlers.expenses as expenses
+        for fn in (expenses.get_buyer_expense_start, expenses.process_buyer_id):
+            self.assertTrue(hasattr(fn, "__wrapped__"), f"{fn.__name__} без гейта")
+
+    def test_admin_callbacks_still_require_admin(self):
+        # Одобрение заявок не должно было расшириться вместе с расходами.
+        import handlers.common as common
+        with patch.object(utils, "ADMIN_ID", ADMIN), \
+             patch.object(utils, "TEAMLEADER_IDS", TEAMLEADERS), \
+             patch.object(utils, "EXPENSE_VIEWER_IDS", VIEWERS):
+            for uid in VIEWERS:
+                self.assertFalse(utils.is_admin(uid), uid)
+        self.assertTrue(hasattr(common.approve_request, "__wrapped__"))

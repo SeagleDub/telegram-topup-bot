@@ -14,7 +14,14 @@ import logging
 import time
 from typing import Dict, List, Optional, Set
 import gspread
-from config import ADMIN_ID, TEAMLEADER_IDS, NOTIFY_IDS, GOOGLE_SHEET_ID
+from config import (
+    ADMIN_ID,
+    TEAMLEADER_IDS,
+    EXPENSE_VIEWER_IDS,
+    NOTIFY_IDS,
+    ROLE_IDS,
+    GOOGLE_SHEET_ID,
+)
 from aiogram import Bot
 
 logger = logging.getLogger(__name__)
@@ -110,8 +117,31 @@ def get_whitelist(force_refresh: bool = False) -> Set[int]:
 
 
 def is_admin(user_id: int) -> bool:
-    """Админ или любой из тимлидеров — повышенный уровень доступа."""
+    """Админ или любой из тимлидеров — полный административный доступ.
+
+    Проверяющий расходы сюда НЕ входит: у него своё, более узкое право
+    (can_view_buyer_expenses). Расширить is_admin было бы проще всего и
+    означало бы выдать роли одобрение заявок и автопродление номеров.
+    """
     return user_id == ADMIN_ID or user_id in TEAMLEADER_IDS
+
+
+def can_view_buyer_expenses(user_id: int) -> bool:
+    """Право смотреть расход по ЧУЖОМУ ID («📊 Получить расход по байеру»).
+
+    Отдельный предикат, а не is_admin: это единственное право роли
+    «проверяющий расходы». Админы и тимлидеры получают его как надмножество.
+    """
+    return is_admin(user_id) or user_id in EXPENSE_VIEWER_IDS
+
+
+def has_configured_role(user_id: int) -> bool:
+    """Пользователю роль назначена вручную в .env (любая из них).
+
+    Считается по составу ролей, а не через право доступа: иначе сужение
+    любого права молча отрезало бы человеку вход в бота целиком.
+    """
+    return user_id in ROLE_IDS
 
 async def delete_last_messages(user_id: int, bot: Bot):
     """Удаляет последние сообщения пользователя"""
@@ -129,7 +159,7 @@ def is_user_allowed(user_id: int) -> bool:
     Основная точка проверки — middlewares.auth.AuthMiddleware. Эта функция
     оставлена как переиспользуемый предикат и для проверок вне middleware.
     """
-    if is_admin(user_id):
+    if has_configured_role(user_id):
         return True
     try:
         return user_id in get_whitelist()

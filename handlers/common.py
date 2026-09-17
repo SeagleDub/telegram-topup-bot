@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 
 from keyboards import get_menu_keyboard, cancel_kb
 from utils import last_messages, delete_last_messages, update_linked_messages
-from config import ADMIN_ID, TEAMLEADER_IDS
+from config import ADMIN_ID, TEAMLEADER_IDS, EXPENSE_VIEWER_IDS
 from middlewares import admin_only
 
 router = Router()
@@ -20,6 +20,8 @@ async def send_welcome(message: Message):
         await message.answer("👑 Админ-панель:", reply_markup=get_menu_keyboard(message.from_user.id))
     elif message.from_user.id in TEAMLEADER_IDS:
         await message.answer("👨‍💼 Тимлидер-панель:", reply_markup=get_menu_keyboard(message.from_user.id))
+    elif message.from_user.id in EXPENSE_VIEWER_IDS:
+        await message.answer("📊 Панель проверки расходов:", reply_markup=get_menu_keyboard(message.from_user.id))
     else:
         await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))
 
