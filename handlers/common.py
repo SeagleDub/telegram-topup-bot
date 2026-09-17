@@ -7,9 +7,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from keyboards import get_menu_keyboard, cancel_kb
-from utils import (last_messages, delete_last_messages, update_linked_messages,
-                     send_notification_to_admins)
-from config import ADMIN_ID, TEAMLEADER_ID
+from utils import last_messages, delete_last_messages, update_linked_messages
+from config import ADMIN_ID, TEAMLEADER_IDS
 from middlewares import admin_only
 
 router = Router()
@@ -19,7 +18,7 @@ async def send_welcome(message: Message):
     """Обрабатывает команду /start"""
     if message.from_user.id == ADMIN_ID:
         await message.answer("👑 Админ-панель:", reply_markup=get_menu_keyboard(message.from_user.id))
-    elif message.from_user.id == TEAMLEADER_ID:
+    elif message.from_user.id in TEAMLEADER_IDS:
         await message.answer("👨‍💼 Тимлидер-панель:", reply_markup=get_menu_keyboard(message.from_user.id))
     else:
         await message.answer("Выберите действие:", reply_markup=get_menu_keyboard(message.from_user.id))

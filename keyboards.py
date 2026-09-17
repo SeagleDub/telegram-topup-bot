@@ -2,7 +2,7 @@
 Клавиатуры для бота
 """
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from config import ADMIN_ID, TEAMLEADER_ID
+from config import ADMIN_ID, TEAMLEADER_IDS
 
 # Текст кнопки вынесен в константу: он используется и в фильтре хендлера,
 # и в определении бакета троттлинга. Расхождение строк тихо отключило бы
@@ -61,7 +61,7 @@ ready_kb = ReplyKeyboardMarkup(resize_keyboard=True, keyboard=[
 
 def get_menu_keyboard(user_id: int):
     """Возвращает подходящую клавиатуру в зависимости от типа пользователя"""
-    if user_id == ADMIN_ID or user_id == TEAMLEADER_ID:
+    if user_id == ADMIN_ID or user_id in TEAMLEADER_IDS:
         return menu_kb_admin_teamleader
     else:
         return menu_kb_user

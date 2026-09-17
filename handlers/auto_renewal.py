@@ -10,7 +10,6 @@ from aiogram.fsm.context import FSMContext
 from states import Form
 from keyboards import cancel_kb, get_menu_keyboard
 from utils import last_messages, delete_last_messages
-from config import ADMIN_ID, TEAMLEADER_ID
 from middlewares import admin_only
 from services.luboydomen import get_all_phone_numbers, toggle_auto_renewal
 

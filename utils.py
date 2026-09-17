@@ -9,18 +9,33 @@ WHITELIST_TTL секунд: проверка доступа выполняетс
 успешный ответ — используется он (устаревший, но рабочий), и в лог пишется
 ошибка. Если успешного ответа ещё не было — доступ закрыт всем (fail-closed).
 """
+import itertools
 import logging
 import time
 from typing import Dict, List, Optional, Set
 import gspread
-from config import ADMIN_ID, TEAMLEADER_ID, GOOGLE_SHEET_ID
+from config import ADMIN_ID, TEAMLEADER_IDS, NOTIFY_IDS, GOOGLE_SHEET_ID
 from aiogram import Bot
 
 logger = logging.getLogger(__name__)
 
 # Глобальные переменные для хранения состояния сообщений
 last_messages: Dict[int, List[int]] = {}
-linked_messages: Dict[str, str] = {}  # Словарь для связывания сообщений админа и тимлидера
+
+# Связь между копиями одного уведомления у разных получателей.
+#
+# Раньше это была ПАРА (ключ -> единственный связанный ключ): получателей было
+# ровно двое. Тимлидеров теперь может быть сколько угодно, поэтому модель —
+# ГРУППА: "chat:msg" -> group_id, group_id -> список всех "chat:msg" группы.
+# Попытка остаться на паре означала бы, что при трёх получателях кнопка
+# обновляется у одного и навсегда зависает у остальных.
+linked_messages: Dict[str, str] = {}          # "chat:msg" -> group_id
+linked_groups: Dict[str, List[str]] = {}      # group_id -> ["chat:msg", ...]
+_group_counter = itertools.count(1)
+
+
+def _message_key(chat_id: int, message_id: int) -> str:
+    return f"{chat_id}:{message_id}"
 
 # --------------------------------------------------------------------------- #
 # Вайтлист: кэш и загрузка
@@ -95,8 +110,8 @@ def get_whitelist(force_refresh: bool = False) -> Set[int]:
 
 
 def is_admin(user_id: int) -> bool:
-    """Админ или тимлидер — повышенный уровень доступа."""
-    return user_id == ADMIN_ID or user_id == TEAMLEADER_ID
+    """Админ или любой из тимлидеров — повышенный уровень доступа."""
+    return user_id == ADMIN_ID or user_id in TEAMLEADER_IDS
 
 async def delete_last_messages(user_id: int, bot: Bot):
     """Удаляет последние сообщения пользователя"""
@@ -129,50 +144,88 @@ def get_user_ids_from_sheet() -> List[int]:
     except WhitelistUnavailable:
         return []
 
-async def send_notification_to_admins(bot: Bot, message_text: str, reply_markup=None):
-    """Отправляет уведомление админу и тимлидеру"""
-    # Отправляем админу
-    admin_msg = await bot.send_message(ADMIN_ID, message_text, reply_markup=reply_markup)
-    # Отправляем тимлидеру
-    teamleader_msg = await bot.send_message(TEAMLEADER_ID, message_text, reply_markup=reply_markup)
-    return {"admin": admin_msg.message_id, "teamleader": teamleader_msg.message_id}
+async def send_notification_to_admins(bot: Bot, message_text: str, reply_markup=None) -> Dict[int, int]:
+    """Рассылает уведомление админу и всем тимлидерам.
+
+    Возвращает {chat_id: message_id} только по успешно доставленным.
+
+    Сбой на одном получателе (заблокировал бота, удалил чат) не должен рвать
+    рассылку остальным: заявка одного пользователя не может пропасть у всей
+    команды из-за одного чужого чата. Поэтому ошибка — громкая, но поштучная.
+    """
+    delivered: Dict[int, int] = {}
+    for chat_id in NOTIFY_IDS:
+        try:
+            msg = await bot.send_message(chat_id, message_text, reply_markup=reply_markup)
+        except Exception:
+            logger.exception(
+                "Не доставлено уведомление получателю %s. Текст: %r",
+                chat_id, message_text[:200],
+            )
+            continue
+        delivered[chat_id] = msg.message_id
+
+    if not delivered:
+        logger.error(
+            "Уведомление не дошло НИ ДО КОГО из %s получателей. Текст: %r",
+            len(NOTIFY_IDS), message_text[:200],
+        )
+    return delivered
 
 async def send_document_to_admins(bot: Bot, document, caption=None):
-    """Отправляет документ админу и тимлидеру"""
-    await bot.send_document(ADMIN_ID, document=document, caption=caption)
-    await bot.send_document(TEAMLEADER_ID, document=document, caption=caption)
+    """Рассылает документ админу и всем тимлидерам (поштучная изоляция ошибок)."""
+    for chat_id in NOTIFY_IDS:
+        try:
+            await bot.send_document(chat_id, document=document, caption=caption)
+        except Exception:
+            logger.exception("Не доставлен документ получателю %s", chat_id)
 
 async def send_photo_to_admins(bot: Bot, photo):
-    """Отправляет фото админу и тимлидеру"""
-    await bot.send_photo(ADMIN_ID, photo)
-    await bot.send_photo(TEAMLEADER_ID, photo)
+    """Рассылает фото админу и всем тимлидерам (поштучная изоляция ошибок)."""
+    for chat_id in NOTIFY_IDS:
+        try:
+            await bot.send_photo(chat_id, photo)
+        except Exception:
+            logger.exception("Не доставлено фото получателю %s", chat_id)
 
 async def update_linked_messages(bot: Bot, current_chat_id: int, current_message_id: int, new_text: str):
-    """Обновляет связанное сообщение у другого админа"""
-    current_key = f"{current_chat_id}:{current_message_id}"
-    if current_key in linked_messages:
-        linked_key = linked_messages[current_key]
-        chat_id, message_id = linked_key.split(":")
+    """Проставляет новый текст во всех остальных копиях того же уведомления.
+
+    Заявку обрабатывает кто-то один, но висящая кнопка остаётся у всех
+    остальных получателей — их копии надо погасить. Группа снимается целиком,
+    повторная обработка того же уведомления становится no-op.
+    """
+    current_key = _message_key(current_chat_id, current_message_id)
+    group_id = linked_messages.pop(current_key, None)
+    if group_id is None:
+        return
+
+    for member_key in linked_groups.pop(group_id, []):
+        linked_messages.pop(member_key, None)
+        if member_key == current_key:
+            continue  # исходное сообщение уже отредактировал вызывающий хендлер
+        chat_id, message_id = member_key.split(":")
         try:
             await bot.edit_message_text(
                 chat_id=int(chat_id),
                 message_id=int(message_id),
                 text=new_text
             )
-        except Exception as e:
-            print(f"Ошибка при обновлении связанного сообщения: {e}")
-
-        # Удаляем обе записи из словаря после обработки
-        del linked_messages[current_key]
-        if linked_key in linked_messages:
-            del linked_messages[linked_key]
+        except Exception:
+            logger.exception(
+                "Не обновлена связанная копия уведомления %s (группа %s)",
+                member_key, group_id,
+            )
 
 async def send_notification_with_buttons(bot: Bot, message_text: str, reply_markup):
-    """Отправляет уведомление с кнопками админу и тимлидеру, сохраняет связи между сообщениями"""
-    message_ids = await send_notification_to_admins(bot, message_text, reply_markup=reply_markup)
+    """Рассылает уведомление с кнопками и связывает все доставленные копии в группу."""
+    delivered = await send_notification_to_admins(bot, message_text, reply_markup=reply_markup)
+    if not delivered:
+        return delivered
 
-    # Сохраняем связь между сообщениями
-    admin_msg_id = message_ids["admin"]
-    teamleader_msg_id = message_ids["teamleader"]
-    linked_messages[f"{ADMIN_ID}:{admin_msg_id}"] = f"{TEAMLEADER_ID}:{teamleader_msg_id}"
-    linked_messages[f"{TEAMLEADER_ID}:{teamleader_msg_id}"] = f"{ADMIN_ID}:{admin_msg_id}"
+    group_id = f"g{next(_group_counter)}"
+    member_keys = [_message_key(chat_id, msg_id) for chat_id, msg_id in delivered.items()]
+    linked_groups[group_id] = member_keys
+    for key in member_keys:
+        linked_messages[key] = group_id
+    return delivered

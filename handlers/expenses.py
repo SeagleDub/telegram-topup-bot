@@ -6,7 +6,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 import gspread
 import bugsnag
-from config import GOOGLE_SHEET_ID, ADMIN_ID, TEAMLEADER_ID
+from config import GOOGLE_SHEET_ID
 from utils import last_messages, delete_last_messages
 from middlewares import admin_only
 from keyboards import cancel_kb, get_menu_keyboard

@@ -37,7 +37,39 @@ KV_SYNC_TOKEN = os.getenv("KV_SYNC_TOKEN")
 
 # ID пользователей
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-TEAMLEADER_ID = int(os.getenv("TEAMLEADER_ID"))
+
+
+def _parse_id_list(raw: str) -> tuple:
+    """Разбирает "111, 222" в кортеж int. Порядок сохраняется, дубли снимаются.
+
+    Порядок важен: он определяет очерёдность рассылки уведомлений, а значит и
+    то, кто увидит заявку первым.
+    """
+    ids = []
+    for part in (raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        value = int(part)  # не try/except: мусор в .env должен ронять старт
+        if value not in ids:
+            ids.append(value)
+    return tuple(ids)
+
+
+# Тимлидов может быть несколько: TEAMLEADER_IDS="111,222,333".
+# Старое односоставное имя TEAMLEADER_ID продолжает работать как запасной
+# источник — иначе обновление кода молча разлогинило бы текущего тимлидера.
+TEAMLEADER_IDS = _parse_id_list(os.getenv("TEAMLEADER_IDS") or os.getenv("TEAMLEADER_ID"))
+if not TEAMLEADER_IDS:
+    raise RuntimeError(
+        "Не задан ни TEAMLEADER_IDS, ни TEAMLEADER_ID. Без тимлидеров заявки "
+        "уйдут только админу — это тихая потеря половины получателей, "
+        "поэтому старт запрещён."
+    )
+
+# Получатели уведомлений о заявках: админ плюс все тимлидеры.
+# Админ первым — исторический порядок рассылки.
+NOTIFY_IDS = (ADMIN_ID,) + tuple(tid for tid in TEAMLEADER_IDS if tid != ADMIN_ID)
 
 # Настройка Bugsnag
 import bugsnag
