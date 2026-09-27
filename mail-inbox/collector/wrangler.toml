@@ -1,0 +1,16 @@
+name = "mail-inbox"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Письма. Бакет приватный: публичного доступа (r2.dev, свой домен) у него нет
+# и быть не должно — в письмах коды подтверждения. Создаётся командой:
+#   npx wrangler r2 bucket create mail-inbox
+# Письма старше 30 дней удаляет правило бакета:
+#   npx wrangler r2 bucket lifecycle add mail-inbox expire-30d --expire-days 30 -y
+[[r2_buckets]]
+binding = "MAIL"
+bucket_name = "mail-inbox"
+
+# Секреты в этот файл не пишутся — он в git. Задаются командами:
+#   npx wrangler secret put RELAY_TOKEN   (запись: пересыльщики)
+#   npx wrangler secret put READ_TOKEN    (чтение: бот)
