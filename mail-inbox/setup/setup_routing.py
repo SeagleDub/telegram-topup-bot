@@ -343,7 +343,9 @@ def process(row: Row, api: CloudflareAPI, config: Optional[dict], uploaded: set,
         api.call("PUT", f"/accounts/{account_id}/workers/scripts/{RELAY_NAME}", raw=body, content_type=content_type)
         uploaded.add(account_id)
     if plan.enable_routing:
-        api.call("POST", f"/zones/{zone_id}/email/routing/dns", {"name": row.domain})
+        # Без name: сам домен включается по умолчанию, а name — только для
+        # поддоменов (сам домен в нём Cloudflare отвергает ошибкой 2007).
+        api.call("POST", f"/zones/{zone_id}/email/routing/dns", {})
     if plan.create_rule:
         api.call("POST", f"/zones/{zone_id}/email/routing/rules", {
             "name": f"info@ → {RELAY_NAME}",

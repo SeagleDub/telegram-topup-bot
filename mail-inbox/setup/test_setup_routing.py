@@ -177,10 +177,12 @@ class FakeAPI:
 
     def __init__(self, routing=None):
         self.calls = []
+        self.bodies = {}
         self.routing = routing or {"enabled": False, "status": "unconfigured"}
 
     def call(self, method, path, body=None, *, raw=None, content_type=None):
         self.calls.append((method, path.split("?")[0]))
+        self.bodies[(method, path.split("?")[0])] = body
         if path.startswith("/zones?"):
             return [{"id": "z1", "status": "active", "account": {"id": "a1"}}]
         if path.endswith("/email/routing"):
@@ -212,6 +214,14 @@ class ProcessTest(unittest.TestCase):
             ("POST", "/zones/z1/email/routing/dns"),
             ("POST", "/zones/z1/email/routing/rules"),
         ])
+
+    def test_enable_routing_on_apex_sends_no_name(self):
+        # name — только для поддоменов: сам домен в name Cloudflare отвергает
+        # («2007: must be a subdomains of …», найдено на живом домене).
+        # Сам домен включается по умолчанию, без name.
+        api = FakeAPI()
+        sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
+        self.assertEqual(api.bodies[("POST", "/zones/z1/email/routing/dns")], {})
 
     def test_dry_run_writes_nothing(self):
         api = FakeAPI()
