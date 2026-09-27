@@ -59,3 +59,7 @@ class Form(StatesGroup):
     group_expenses_choose_period = State()
     group_expenses_enter_period = State()
 
+    # Почта доменов (info@<domain>): ожидание домена. Остаётся и после показа
+    # списка — можно сразу ввести следующий домен.
+    mail_waiting_for_domain = State()
+

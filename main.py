@@ -39,7 +39,8 @@ from handlers import (
     auto_renewal,
     card_actions,
     card_group_expenses,
-    video_cloud
+    video_cloud,
+    mail_inbox
 )
 from services import video
 from services.video_queue import run_video_queue
@@ -91,6 +92,9 @@ def create_dispatcher() -> Dispatcher:
     dp.include_router(card_actions.router)
     dp.include_router(card_group_expenses.router)
     dp.include_router(video_cloud.router)
+    # Последним: общий «❌ Отмена» из common и кнопки других разделов должны
+    # срабатывать раньше, чем состояние ожидания домена заберёт любой текст.
+    dp.include_router(mail_inbox.router)
 
     return dp
 

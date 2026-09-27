@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, Deque, Dict, Tuple
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from keyboards import VIDEO_CLOUD_TEXT
+from keyboards import MAIL_INBOX_TEXT, VIDEO_CLOUD_TEXT
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ LIMITS: Dict[str, Tuple[int, int]] = {
     "sms": (10, 60),            # запрос SMS
     "group_expenses": (10, 60),  # расход по группе — тяжёлый запрос с пагинацией
     "video_cloud": (10, 60),     # открытие загрузчика видео
+    "mail": (10, 60),            # почта доменов — каждый запрос идёт в mail-inbox
 }
 
 THROTTLE_TEXT = "⏳ Слишком часто. Подождите немного и повторите."
@@ -53,6 +54,7 @@ _TEXT_BUCKETS = {
     # RATE_LIMIT_MAX в cloudflare/src/index.js. Этот бакет тот лимит не
     # заменяет и заменить не может.
     VIDEO_CLOUD_TEXT: "video_cloud",
+    MAIL_INBOX_TEXT: "mail",
 }
 
 # Префиксы callback_data -> бакет.
@@ -60,6 +62,7 @@ _CALLBACK_BUCKETS = {
     "card_block_confirm:": "card_block",
     "card_action:otp": "card_otp",
     "gexp:": "group_expenses",
+    "mail:": "mail",
 }
 
 
@@ -81,6 +84,10 @@ def _bucket_for(event: TelegramObject, data: Dict[str, Any]) -> str:
         state = data.get("raw_state")
         if state and "card_actions_enter_number" in str(state):
             return "card_lookup"
+        # Ввод домена — тоже запрос в mail-inbox, а по тексту он неотличим от
+        # любого другого сообщения.
+        if state and "mail_waiting_for_domain" in str(state):
+            return "mail"
         # Запасной признак на случай, если состояние недоступно: строка из
         # 12+ цифр — это номер карты, и перебор надо тормозить независимо от
         # того, дошло ли до нас состояние FSM.
