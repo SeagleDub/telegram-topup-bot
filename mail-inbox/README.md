@@ -45,6 +45,13 @@ CSV: колонка 1 — `email:token`, колонка 3 — домен. Отч
 Права API Token: Zone Read, DNS Read, Zone Settings Edit, Email Routing Rules Edit,
 Workers Scripts Edit.
 
+`сеть: [SSL: CERTIFICATE_VERIFY_FAILED]` на Mac — Python установлен с python.org
+и не видит сертификаты macOS. Один раз:
+
+```bash
+"/Applications/Python 3.13/Install Certificates.command"
+```
+
 ## Тесты
 
 ```bash
