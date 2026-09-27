@@ -21,6 +21,13 @@
 /** Паузы перед 2-й и 3-й попыткой. */
 const RETRY_DELAYS_MS = [1000, 3000];
 
+/**
+ * Длина from/subject в метаданных. mail-inbox всё равно хранит 200 символов,
+ * а URL-кодирование раздувает кириллицу в 6 раз: без обрезки спам с темой на
+ * 10 000 символов дал бы заголовок больше лимита Cloudflare и потерю письма.
+ */
+const META_MAX_CHARS = 200;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default {
@@ -36,8 +43,8 @@ export default {
     const meta = encodeURIComponent(
       JSON.stringify({
         to: message.to,
-        from: message.headers.get("from") || message.from,
-        subject: message.headers.get("subject") || "",
+        from: (message.headers.get("from") || message.from).slice(0, META_MAX_CHARS),
+        subject: (message.headers.get("subject") || "").slice(0, META_MAX_CHARS),
       }),
     );
     const init = {

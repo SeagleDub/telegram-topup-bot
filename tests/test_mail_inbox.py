@@ -74,6 +74,11 @@ class ButtonLabelTest(unittest.TestCase):
         self.assertEqual(len(label), 60)
         self.assertTrue(label.endswith("…"))
 
+    def test_encoded_sender_name_with_comma(self):
+        # Декодировать до разбора адреса нельзя: запятая в имени ломает parseaddr.
+        item = dict(self._item(28), **{"from": "=?UTF-8?Q?Doe=2C_John?= <j@x.com>"})
+        self.assertIn(" · Doe, John · ", mail_inbox.button_label(item, self.NOW))
+
 
 class RenderMessageTest(unittest.TestCase):
     def test_plain_cp1251_quoted_printable(self):
@@ -101,6 +106,23 @@ class RenderMessageTest(unittest.TestCase):
         text = mail_inbox.render_message(raw, kyiv_ms(28))
         self.assertIn("…обрезано", text)
         self.assertLess(len(text), 4096)
+
+    def test_emoji_mail_fits_telegram_limit(self):
+        # Telegram считает длину в единицах UTF-16: эмодзи — две.
+        raw = build_mail("😀" * 5000, subject="🔥" * 300).as_bytes()
+        text = mail_inbox.render_message(raw, kyiv_ms(28))
+        self.assertLess(len(text.encode("utf-16-le")) // 2, 4096)
+        self.assertIn("…обрезано", text)
+
+    def test_empty_plain_part_falls_back_to_html(self):
+        msg = build_mail("")
+        msg.add_alternative("<p>Ваш код: <b>481516</b></p>", subtype="html")
+        self.assertIn("Ваш код: 481516", mail_inbox.render_message(msg.as_bytes(), None))
+
+    def test_table_cells_do_not_stick_together(self):
+        raw = build_mail("<table><tr><td>Код</td><td>123456</td><td>действует 10 мин</td></tr></table>",
+                         subtype="html").as_bytes()
+        self.assertIn("Код 123456 действует 10 мин", mail_inbox.render_message(raw, None))
 
     def test_attachments_listed_by_name(self):
         msg = build_mail("см. вложение")

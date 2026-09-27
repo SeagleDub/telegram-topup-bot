@@ -18,6 +18,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -62,14 +63,14 @@ def read_rows(path: Path) -> Tuple[List[Row], List[Tuple[int, str]]]:
     """CSV → (годные строки, [(номер строки, причина пропуска)])."""
     # utf-8-sig: Excel пишет BOM в начало файла.
     text = path.read_text(encoding="utf-8-sig")
-    try:
-        # Excel с русской локалью сохраняет CSV через «;».
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
-    except csv.Error:
-        dialect = csv.excel
 
     rows, skipped = [], []
-    for line, cells in enumerate(csv.reader(text.splitlines(), dialect), start=1):
+    for line, raw_line in enumerate(text.splitlines(), start=1):
+        # В «email:token» не бывает ни «,», ни «;», ни табуляции, поэтому первый
+        # из этих символов в строке — её разделитель. csv.Sniffer тут ошибается:
+        # русский Excel пишет «;», а «,» во второй колонке — десятичная запятая.
+        delimiter = re.search(r"[,;\t]", raw_line)
+        cells = next(csv.reader([raw_line], delimiter=delimiter.group() if delimiter else ","), [])
         if not any(cell.strip() for cell in cells):
             continue
         creds = cells[0].strip()
@@ -216,17 +217,26 @@ def _describe_rule(rule: dict) -> str:
     ) or "без действий"
 
 
-def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enabled: bool, rules: list) -> Plan:
+def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enabled: bool, rules: list,
+                routing_status: str = "ready", catch_all: Optional[dict] = None) -> Plan:
     """Что делать с доменом. Чистая функция: вся логика «трогать или нет» здесь."""
     address = f"info@{domain}"
 
     foreign_mx = sorted({
-        (r.get("content") or "").rstrip(".")
+        # «.» — null MX (RFC 7505): домен явно не принимает почту. Тоже чужое
+        # решение, и в отчёте оно должно быть видно, а не пустой строкой.
+        (r.get("content") or "").rstrip(".") or "."
         for r in mx_records
         if r.get("name") == domain and not (r.get("content") or "").rstrip(".").lower().endswith(CF_MX_SUFFIX)
     })
     if foreign_mx:
         return Plan(skip="чужая почта (MX): " + ", ".join(foreign_mx))
+
+    # Включённая, но сломанная маршрутизация (например, удалили MX): правило
+    # создать можно, но письма не придут. Назвать такой домен «настроенным» —
+    # значит спрятать проблему.
+    if routing_enabled and routing_status != "ready":
+        return Plan(skip=f"Email Routing включён, но статус «{routing_status}» — проверь DNS домена")
 
     # Свой SPF мешает только включению: Email Routing добавит вторую запись
     # v=spf1, а с двумя SPF-записями SPF домена недействителен.
@@ -239,6 +249,12 @@ def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enable
         ]
         if own_spf:
             return Plan(skip="есть свой SPF: " + own_spf[0])
+
+    # Catch-all уже доставляет и info@: правило для info@ точнее catch-all и
+    # молча увело бы эти письма у того, кто их сейчас получает.
+    if catch_all and catch_all.get("enabled") and any(
+            a.get("type") != "drop" for a in catch_all.get("actions") or []):
+        return Plan(skip="catch-all уже настроен: " + _describe_rule(catch_all))
 
     rule = next((r for r in rules if _matches(r, address)), None)
     if rule is not None and not _is_ours(rule):
@@ -298,27 +314,36 @@ def process(row: Row, api: CloudflareAPI, config: Optional[dict], uploaded: set,
     txt = api.call("GET", f"/zones/{zone_id}/dns_records?"
                    + urllib.parse.urlencode({"type": "TXT", "name": row.domain, "per_page": 100})) or []
     try:
-        routing_enabled = bool((api.call("GET", f"/zones/{zone_id}/email/routing") or {}).get("enabled"))
+        routing = api.call("GET", f"/zones/{zone_id}/email/routing") or {}
     except CFError as e:
         if e.status != 404:
             raise
-        routing_enabled = False
+        routing = {}
     rules = api.list_all(f"/zones/{zone_id}/email/routing/rules", RULES_PER_PAGE)
+    try:
+        catch_all = api.call("GET", f"/zones/{zone_id}/email/routing/rules/catch_all")
+    except CFError as e:
+        if e.status != 404:
+            raise
+        catch_all = None
 
-    plan = plan_domain(row.domain, mx, txt, routing_enabled, rules)
+    plan = plan_domain(row.domain, mx, txt, bool(routing.get("enabled")), rules,
+                       routing_status=routing.get("status", "ready"), catch_all=catch_all)
     if plan.skip:
         return SKIPPED, plan.skip
     if dry_run:
         return (ALREADY if plan.nothing_to_do else PLANNED), plan.describe()
 
-    if plan.enable_routing:
-        api.call("POST", f"/zones/{zone_id}/email/routing/dns", {"name": row.domain})
-    # Раз на аккаунт за запуск. Перезаливка безопасна: так же обновляется код
-    # пересыльщика во всех аккаунтах.
+    # Сначала пересыльщик, потом DNS: если заливка не удастся (раздел 9
+    # спеки), домен останется нетронутым, а не с заблокированными MX без
+    # обработчика. Раз на аккаунт за запуск; перезаливка безопасна — так же
+    # обновляется код пересыльщика во всех аккаунтах.
     if account_id not in uploaded:
         body, content_type = build_relay_upload(config["ingest_url"], config["relay_token"], config["relay_code"])
         api.call("PUT", f"/accounts/{account_id}/workers/scripts/{RELAY_NAME}", raw=body, content_type=content_type)
         uploaded.add(account_id)
+    if plan.enable_routing:
+        api.call("POST", f"/zones/{zone_id}/email/routing/dns", {"name": row.domain})
     if plan.create_rule:
         api.call("POST", f"/zones/{zone_id}/email/routing/rules", {
             "name": f"info@ → {RELAY_NAME}",
@@ -347,7 +372,9 @@ def main(argv=None) -> int:
     config = None
     if not args.dry_run:
         load_dotenv(ENV_FILE)
-        base_url = (os.getenv("MAIL_INBOX_URL") or "").rstrip("/")
+        # removesuffix: частая ошибка — вписать полный адрес с /ingest; тогда все
+        # пересыльщики слали бы на /ingest/ingest, получали 404 и теряли письма.
+        base_url = (os.getenv("MAIL_INBOX_URL") or "").rstrip("/").removesuffix("/ingest")
         relay_token = os.getenv("RELAY_TOKEN") or ""
         if not base_url.startswith("https://") or not relay_token:
             print(f"Нужны MAIL_INBOX_URL (https://…) и RELAY_TOKEN в {ENV_FILE}", file=sys.stderr)
@@ -374,7 +401,8 @@ def main(argv=None) -> int:
         print(f"{status}  {row.domain}  {reason}", flush=True)
 
     report_path = args.csv_path.with_name(f"{args.csv_path.stem}.report.csv")
-    with report_path.open("w", newline="", encoding="utf-8") as f:
+    # utf-8-sig: без BOM русский Excel показывает кириллицу кракозябрами.
+    with report_path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow(["domain", "status", "reason"])
         writer.writerows(report)

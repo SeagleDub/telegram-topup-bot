@@ -50,6 +50,10 @@ def _list_view(address: str, items: list):
 
 async def _current_list(query: CallbackQuery, state: FSMContext) -> dict | None:
     """Данные списка, если кнопка нажата в последнем показанном списке, иначе None."""
+    # InaccessibleMessage (сообщение удалено или недоступно боту) не умеет
+    # edit_text — для пользователя это тот же устаревший список.
+    if not isinstance(query.message, Message):
+        return None
     data = await state.get_data()
     if not data.get("mail_address") or data.get("mail_list_message_id") != query.message.message_id:
         return None
@@ -106,7 +110,6 @@ async def refresh_inbox(query: CallbackQuery, state: FSMContext):
         await query.answer(UNAVAILABLE_TEXT, show_alert=True)
         return
 
-    await state.update_data(mail_items=items)
     text, kb = _list_view(address, items)
     try:
         await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -114,8 +117,12 @@ async def refresh_inbox(query: CallbackQuery, state: FSMContext):
         # Список не изменился — Telegram отказывается «редактировать» в то же самое.
         if "message is not modified" not in str(e):
             raise
+        await state.update_data(mail_items=items)
         await query.answer("Новых писем нет")
         return
+    # Только после успешной правки: кнопки выбирают письмо по номеру, и новый
+    # список при старых кнопках открыл бы не то письмо, что написано на кнопке.
+    await state.update_data(mail_items=items)
     await query.answer("Обновлено")
 
 
@@ -140,10 +147,15 @@ async def open_mail(query: CallbackQuery, state: FSMContext):
         await query.message.answer(UNAVAILABLE_TEXT)
         return
 
-    await query.message.answer(
-        mail_inbox.render_message(raw, item.get("receivedAt")),
-        parse_mode="HTML",
-        # Для превью Telegram сам открывает ссылку — одноразовая ссылка
-        # «войти / подтвердить» сработала бы раньше человека.
-        disable_web_page_preview=True,
-    )
+    try:
+        await query.message.answer(
+            mail_inbox.render_message(raw, item.get("receivedAt")),
+            parse_mode="HTML",
+            # Для превью Telegram сам открывает ссылку — одноразовая ссылка
+            # «войти / подтвердить» сработала бы раньше человека.
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest:
+        # Нажатие уже подтверждено — без этого ответа человек не увидит ничего.
+        logger.exception("[mail-inbox] Telegram не принял письмо: %s", item["id"])
+        await query.message.answer("❌ Не удалось показать это письмо в Telegram.")

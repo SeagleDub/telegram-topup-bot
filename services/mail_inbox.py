@@ -30,13 +30,12 @@ logger = logging.getLogger(__name__)
 # Та же проверка, что в mail-inbox/collector/src/index.js (ADDRESS_RE).
 _ADDRESS_RE = re.compile(r"^[a-z0-9._+-]{1,64}@(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$")
 
-# ponytail: лимиты в символах Python, а Telegram считает 4096 единиц UTF-16
-# (эмодзи — две). Худший случай без эмодзи ~3800, запас ~300 покрывает обычные
-# письма. Если упрётся — резать тело по длине в UTF-16.
-MAX_TEXT_CHARS = 3000
-MAX_HEADER_CHARS = 200
-MAX_ATTACHMENTS_CHARS = 300
-MAX_LABEL_CHARS = 60
+# Лимиты — в единицах UTF-16: так длину считает Telegram (4096 на сообщение,
+# эмодзи — две единицы). Вместе с подписями полей сумма ~3800 — в лимит влезает.
+MAX_TEXT_LEN = 3000
+MAX_HEADER_LEN = 200
+MAX_ATTACHMENTS_LEN = 300
+MAX_LABEL_LEN = 60
 
 _TIMEOUT = aiohttp.ClientTimeout(total=20)
 
@@ -83,17 +82,26 @@ def decode_header_value(value: Optional[str]) -> str:
         return value or ""
 
 
-def _cut(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+def _cut(text: str, limit: int, tail: str = "…") -> str:
+    """Обрезает до limit единиц UTF-16 — так длину считает Telegram."""
+    encoded = text.encode("utf-16-le")
+    if len(encoded) <= limit * 2:
+        return text
+    keep = (limit - len(tail.encode("utf-16-le")) // 2) * 2
+    # "ignore" отбрасывает половинку эмодзи, если разрез пришёлся на неё.
+    return encoded[:keep].decode("utf-16-le", "ignore").rstrip() + tail
 
 
 def button_label(item: dict, now: datetime) -> str:
     """«12:41 · Google · Код подтверждения» — подпись кнопки письма в списке."""
     received = datetime.fromtimestamp(item["receivedAt"] / 1000, KYIV_TZ)
     when = received.strftime("%H:%M" if received.date() == now.date() else "%d.%m %H:%M")
-    name, addr = parseaddr(decode_header_value(item.get("from")))
+    # Сначала разбор адреса, потом декодирование имени: декодированная запятая
+    # («Doe, John») ломает parseaddr.
+    name, addr = parseaddr(item.get("from") or "")
+    name = decode_header_value(name)
     subject = decode_header_value(item.get("subject")) or "(без темы)"
-    return _cut(f"{when} · {name or addr or '?'} · {subject}", MAX_LABEL_CHARS)
+    return _cut(f"{when} · {name or addr or '?'} · {subject}", MAX_LABEL_LEN)
 
 
 # --------------------------------------------------------------------------- #
@@ -120,6 +128,9 @@ class _HtmlToText(HTMLParser):
             self._skip_depth += 1
         elif tag == "br" or tag in self._BLOCK:
             self.parts.append("\n")
+        elif tag in ("td", "th"):
+            # Иначе ячейки слипаются: «Код» + «123456» → «Код123456».
+            self.parts.append(" ")
         elif tag == "a":
             self._href = (dict(attrs).get("href") or "").strip()
             self._link_start = len(self.parts)
@@ -152,10 +163,7 @@ def _tidy(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
-def _body_text(msg) -> str:
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        return ""
+def _part_text(part) -> str:
     try:
         content = part.get_content()
     except (LookupError, UnicodeError):
@@ -166,11 +174,22 @@ def _body_text(msg) -> str:
     return _tidy(content)
 
 
+def _body_text(msg) -> str:
+    # Текстовая часть в приоритете, но пустая — не повод молчать: бывает, что
+    # text/plain пустой, а код есть только в HTML.
+    for subtype in ("plain", "html"):
+        part = msg.get_body(preferencelist=(subtype,))
+        text = _part_text(part) if part is not None else ""
+        if text:
+            return text
+    return ""
+
+
 def render_message(raw: bytes, received_at_ms: Optional[int]) -> str:
     """Письмо (.eml) → текст для Telegram (parse_mode=HTML). Всё из письма экранируется."""
     msg = email.message_from_bytes(raw, policy=policy.default)
-    subject = _cut(str(msg.get("subject") or "").strip() or "(без темы)", MAX_HEADER_CHARS)
-    sender = _cut(str(msg.get("from") or "").strip() or "?", MAX_HEADER_CHARS)
+    subject = _cut(str(msg.get("subject") or "").strip() or "(без темы)", MAX_HEADER_LEN)
+    sender = _cut(str(msg.get("from") or "").strip() or "?", MAX_HEADER_LEN)
 
     lines = [f"✉️ <b>{html.escape(subject)}</b>", f"От: {html.escape(sender)}"]
     if received_at_ms:
@@ -190,14 +209,12 @@ def render_message(raw: bytes, received_at_ms: Optional[int]) -> str:
     elif not body:
         lines.append("<i>(текст письма пустой)</i>")
     else:
-        if len(body) > MAX_TEXT_CHARS:
-            body = body[:MAX_TEXT_CHARS].rstrip() + "\n…обрезано"
-        lines.append(html.escape(body))
+        lines.append(html.escape(_cut(body, MAX_TEXT_LEN, "\n…обрезано")))
 
     names = [part.get_filename() or "без имени" for part in msg.iter_attachments()]
     if names:
         lines.append("")
-        lines.append("📎 Вложения (не пересылаются): " + html.escape(_cut(", ".join(names), MAX_ATTACHMENTS_CHARS)))
+        lines.append("📎 Вложения (не пересылаются): " + html.escape(_cut(", ".join(names), MAX_ATTACHMENTS_LEN)))
     return "\n".join(lines)
 
 

@@ -86,6 +86,9 @@ credentials.json
 *.key
 .env.*
 !.env.example
+# CSV с доступами к Cloudflare-аккаунтам (mail-inbox/setup) и отчёты по ним.
+# На уровне всего репозитория: скрипт запускают из корня, и CSV лежит где угодно.
+*.csv
 
 # Выгрузки данных API (могут содержать PAN, CVV, 3DS-пароли)
 *_DUMP.json

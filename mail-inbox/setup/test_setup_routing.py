@@ -77,6 +77,26 @@ class PlanDomainTest(unittest.TestCase):
         self.assertIs(plan.enable_rule, rule)
         self.assertFalse(plan.create_rule)
 
+    def test_catch_all_forward_is_skipped(self):
+        # Catch-all уже доставляет и info@ — наше правило увело бы эти письма.
+        catch_all = {"enabled": True, "actions": [{"type": "forward", "value": ["boss@gmail.com"]}]}
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all)
+        self.assertIn("boss@gmail.com", plan.skip)
+
+    def test_catch_all_drop_or_disabled_is_fine(self):
+        for catch_all in ({"enabled": True, "actions": [{"type": "drop"}]},
+                          {"enabled": False, "actions": [{"type": "forward", "value": ["x@y.com"]}]}):
+            with self.subTest(catch_all=catch_all):
+                self.assertIsNone(sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all).skip)
+
+    def test_broken_routing_is_reported_not_called_configured(self):
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [OUR_RULE], routing_status="misconfigured")
+        self.assertIn("misconfigured", plan.skip)
+
+    def test_null_mx_reason_is_readable(self):
+        plan = sr.plan_domain(DOMAIN, [{"name": DOMAIN, "content": "."}], [], False, [])
+        self.assertTrue(plan.skip.endswith(": ."))
+
 
 class ReadRowsTest(unittest.TestCase):
     def _read(self, text):
@@ -98,6 +118,113 @@ class ReadRowsTest(unittest.TestCase):
         rows, skipped = self._read("a@b.com:tok,x\n")
         self.assertEqual(rows, [])
         self.assertEqual(skipped, [(1, "нет домена в колонке 3")])
+
+    def test_russian_excel_decimal_comma_in_column_2(self):
+        # Русский Excel: разделитель «;», а «,» — десятичная запятая.
+        # По одной запятой в каждой строке: для csv.Sniffer «,» выглядит таким же
+        # стабильным разделителем, как «;», и он выбирает «,».
+        rows, skipped = self._read("a@b.com:tok1;12,50;site1.com\nc@d.com:tok2;7,25;site2.com\n")
+        self.assertEqual(skipped, [])
+        self.assertEqual(rows, [sr.Row(1, "a@b.com", "tok1", "site1.com"),
+                                sr.Row(2, "c@d.com", "tok2", "site2.com")])
+
+
+class ScriptedAPI(sr.CloudflareAPI):
+    """CloudflareAPI без сети: _send отдаёт заготовленные ответы по очереди."""
+
+    def __init__(self, outcomes):
+        super().__init__("a@b.com", "tok")
+        self.outcomes = list(outcomes)
+        self.modes = []
+
+    def _send(self, mode, method, path, body, raw, content_type):
+        self.modes.append(mode)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class CloudflareAPITest(unittest.TestCase):
+    def test_falls_back_to_global_key_and_remembers(self):
+        api = ScriptedAPI([sr.CFError(400, "not a token"), ["zone"], ["again"]])
+        self.assertEqual(api.call("GET", "/zones"), ["zone"])
+        self.assertEqual(api.call("GET", "/zones"), ["again"])
+        self.assertEqual(api.modes, ["token", "key", "key"])
+
+    def test_server_error_does_not_trigger_fallback(self):
+        api = ScriptedAPI([sr.CFError(500, "boom")])
+        with self.assertRaises(sr.CFError):
+            api.call("GET", "/zones")
+        self.assertEqual(api.modes, ["token"])
+
+    def test_both_auth_modes_rejected_reports_both(self):
+        api = ScriptedAPI([sr.CFError(403, "token says no"), sr.CFError(403, "key says no")])
+        with self.assertRaises(sr.CFError) as ctx:
+            api.call("GET", "/zones")
+        self.assertIn("token says no", str(ctx.exception))
+        self.assertIn("key says no", str(ctx.exception))
+        self.assertIsNone(api.mode)
+
+    def test_list_all_walks_pages(self):
+        api = ScriptedAPI([[1, 2], [3]])
+        api.mode = "token"
+        self.assertEqual(api.list_all("/rules", per_page=2), [1, 2, 3])
+
+
+class FakeAPI:
+    """Аккаунт a1 с активной зоной z1 без почты; записывает вызовы."""
+
+    def __init__(self, routing=None):
+        self.calls = []
+        self.routing = routing or {"enabled": False, "status": "unconfigured"}
+
+    def call(self, method, path, body=None, *, raw=None, content_type=None):
+        self.calls.append((method, path.split("?")[0]))
+        if path.startswith("/zones?"):
+            return [{"id": "z1", "status": "active", "account": {"id": "a1"}}]
+        if path.endswith("/email/routing"):
+            return self.routing
+        if path.endswith("/catch_all"):
+            return {"enabled": False, "actions": [{"type": "drop"}]}
+        return []
+
+    def list_all(self, path, per_page):
+        self.calls.append(("GET", path))
+        return []
+
+    def writes(self):
+        return [c for c in self.calls if c[0] != "GET"]
+
+
+CONFIG = {"ingest_url": "https://mail-inbox.x.workers.dev/ingest", "relay_token": "t", "relay_code": b"code"}
+
+
+class ProcessTest(unittest.TestCase):
+    def test_relay_is_uploaded_before_dns_changes(self):
+        # Сбой заливки (раздел 9 спеки) не должен оставить домен с
+        # включённой маршрутизацией и заблокированными MX без пересыльщика.
+        api = FakeAPI()
+        status, _ = sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
+        self.assertEqual(status, sr.OK)
+        self.assertEqual(api.writes(), [
+            ("PUT", "/accounts/a1/workers/scripts/mail-inbox-relay"),
+            ("POST", "/zones/z1/email/routing/dns"),
+            ("POST", "/zones/z1/email/routing/rules"),
+        ])
+
+    def test_dry_run_writes_nothing(self):
+        api = FakeAPI()
+        status, _ = sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, None, set(), dry_run=True)
+        self.assertEqual(status, sr.PLANNED)
+        self.assertEqual(api.writes(), [])
+
+    def test_relay_uploaded_once_per_account(self):
+        api, uploaded = FakeAPI(), set()
+        for row in (sr.Row(1, "a@b.com", "t", DOMAIN), sr.Row(2, "a@b.com", "t", "site2.com")):
+            sr.process(row, api, CONFIG, uploaded, dry_run=False)
+        self.assertEqual([c for c in api.writes() if c[0] == "PUT"],
+                         [("PUT", "/accounts/a1/workers/scripts/mail-inbox-relay")])
 
 
 class RelayUploadTest(unittest.TestCase):

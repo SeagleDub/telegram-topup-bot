@@ -71,6 +71,18 @@ test("кириллическая тема уходит в заголовке т�
   assert.equal(metaOf(calls[0]).subject, "Код подтверждения");
 });
 
+test("огромная тема обрезается: заголовок не упрётся в лимит Cloudflare", async () => {
+  // URL-кодирование раздувает кириллицу в 6 раз; спам с темой на 10 000
+  // символов иначе дал бы заголовок больше лимита, 4xx и потерю письма.
+  const calls = stubFetch([200]);
+  await relay.email(fakeMessage("Ж".repeat(10_000), "Ж".repeat(10_000)), ENV);
+
+  const meta = metaOf(calls[0]);
+  assert.equal(meta.subject.length, 200);
+  assert.equal(meta.from.length, 200);
+  assert.ok(calls[0].init.headers["x-mail-meta"].length < 4000);
+});
+
 test("без заголовка From берётся адрес конверта", async () => {
   const calls = stubFetch([200]);
   await relay.email(fakeMessage("s", null), ENV);

@@ -84,10 +84,6 @@ def _bucket_for(event: TelegramObject, data: Dict[str, Any]) -> str:
         state = data.get("raw_state")
         if state and "card_actions_enter_number" in str(state):
             return "card_lookup"
-        # Ввод домена — тоже запрос в mail-inbox, а по тексту он неотличим от
-        # любого другого сообщения.
-        if state and "mail_waiting_for_domain" in str(state):
-            return "mail"
         # Запасной признак на случай, если состояние недоступно: строка из
         # 12+ цифр — это номер карты, и перебор надо тормозить независимо от
         # того, дошло ли до нас состояние FSM.
