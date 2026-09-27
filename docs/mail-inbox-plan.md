@@ -86,7 +86,8 @@ mkdir -p mail-inbox/relay
  * только то, что повтор может исправить, а в конце пересыльщик падает, а не
  * глотает ошибку.
  *
- * Запуск: node --test mail-inbox/relay/
+ * Запуск: node --test "mail-inbox/relay/*.test.mjs"
+ * (именно шаблон: папку Node 24 принимает за модуль и не запускает).
  * Два теста ждут настоящие паузы между попытками (1 и 3 с).
  */
 import { test, afterEach } from "node:test";
@@ -177,7 +178,7 @@ test("4xx не повторяется: одна попытка и исключе
 
 - [ ] **Шаг 3: убедиться, что падает**
 
-Run: `node --test mail-inbox/relay/`
+Run: `node --test "mail-inbox/relay/*.test.mjs"`
 Expected: FAIL — `Cannot find module .../relay.mjs`.
 
 - [ ] **Шаг 4: реализация**
@@ -256,7 +257,7 @@ export default {
 
 - [ ] **Шаг 5: тесты проходят**
 
-Run: `node --test mail-inbox/relay/`
+Run: `node --test "mail-inbox/relay/*.test.mjs"`
 Expected: PASS, 6 тестов (~5 с из-за пауз).
 
 - [ ] **Шаг 6: коммит**
@@ -294,7 +295,7 @@ git commit -m "feat(mail-inbox): add email relay worker"
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test \"test/*.test.mjs\"",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail"
   },
@@ -1894,7 +1895,7 @@ Workers Scripts Edit.
 ## Тесты
 
 ```bash
-node --test mail-inbox/relay/
+node --test "mail-inbox/relay/*.test.mjs"
 (cd mail-inbox/collector && npm test)
 .venv/bin/python -m unittest discover -s mail-inbox/setup -v
 ```
