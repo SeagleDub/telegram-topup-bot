@@ -130,6 +130,39 @@ class RenderMessageTest(unittest.TestCase):
         text = mail_inbox.render_message(msg.as_bytes(), None)
         self.assertIn("см. вложение", text)
         self.assertIn("invoice.pdf", text)
+        # Файлы теперь отдаются кнопками под письмом.
+        self.assertNotIn("не пересылаются", text)
+
+
+def mail_with_attachments() -> bytes:
+    msg = build_mail("см. вложения")
+    msg.add_attachment(b"%PDF-1.4", maintype="application", subtype="pdf", filename="invoice.pdf")
+    msg.add_attachment("строка;1\n".encode("utf-8"), maintype="text", subtype="csv", filename="счёт.csv")
+    msg.add_attachment(b"\x89PNG\r\n", maintype="image", subtype="png")  # без имени
+    return msg.as_bytes()
+
+
+class AttachmentsTest(unittest.TestCase):
+    def test_list_names_and_sizes_in_mail_order(self):
+        self.assertEqual(mail_inbox.list_attachments(mail_with_attachments()), [
+            {"name": "invoice.pdf", "size": 8},
+            {"name": "счёт.csv", "size": len("строка;1\n".encode("utf-8"))},
+            {"name": "attachment-3.png", "size": 6},
+        ])
+
+    def test_get_attachment_returns_original_bytes(self):
+        raw = mail_with_attachments()
+        self.assertEqual(mail_inbox.get_attachment(raw, 0), ("invoice.pdf", b"%PDF-1.4"))
+        self.assertEqual(mail_inbox.get_attachment(raw, 2), ("attachment-3.png", b"\x89PNG\r\n"))
+
+    def test_get_attachment_out_of_range(self):
+        with self.assertRaises(IndexError):
+            mail_inbox.get_attachment(mail_with_attachments(), 3)
+
+    def test_attachment_label_shows_readable_size(self):
+        self.assertEqual(mail_inbox.attachment_label({"name": "a.pdf", "size": 512}), "📎 a.pdf · 512 Б")
+        self.assertEqual(mail_inbox.attachment_label({"name": "a.pdf", "size": 120 * 1024}), "📎 a.pdf · 120 КБ")
+        self.assertEqual(mail_inbox.attachment_label({"name": "a.pdf", "size": 5 * 1024 * 1024 + 1}), "📎 a.pdf · 5.0 МБ")
 
 
 if __name__ == "__main__":

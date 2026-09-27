@@ -16,7 +16,7 @@ from datetime import datetime
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from keyboards import MAIL_INBOX_TEXT, cancel_kb, get_menu_keyboard
 from services import mail_inbox
@@ -29,6 +29,7 @@ router = Router()
 
 UNAVAILABLE_TEXT = "❌ Почта сейчас недоступна, попробуйте через минуту."
 STALE_TEXT = "Список устарел — введите домен ещё раз."
+STALE_MAIL_TEXT = "Письмо устарело — откройте его из списка ещё раз."
 
 if not mail_inbox.is_configured():
     # Не ошибка старта: без почты остальной бот работает, а кнопка честно
@@ -148,14 +149,62 @@ async def open_mail(query: CallbackQuery, state: FSMContext):
         return
 
     try:
-        await query.message.answer(
+        attachments = mail_inbox.list_attachments(raw)
+    except Exception:
+        # Письмо — чужие данные: сломанный MIME не должен мешать показать текст.
+        logger.exception("[mail-inbox] вложения не разобраны: %s", item["id"])
+        attachments = []
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=mail_inbox.attachment_label(att), callback_data=f"mail:att:{i}")]
+        for i, att in enumerate(attachments)
+    ]) if attachments else None
+
+    try:
+        sent = await query.message.answer(
             mail_inbox.render_message(raw, item.get("receivedAt")),
             parse_mode="HTML",
             # Для превью Telegram сам открывает ссылку — одноразовая ссылка
             # «войти / подтвердить» сработала бы раньше человека.
             disable_web_page_preview=True,
+            reply_markup=kb,
         )
     except TelegramBadRequest:
         # Нажатие уже подтверждено — без этого ответа человек не увидит ничего.
         logger.exception("[mail-inbox] Telegram не принял письмо: %s", item["id"])
         await query.message.answer("❌ Не удалось показать это письмо в Telegram.")
+        return
+    # Кнопки вложений работают только у последнего открытого письма — так же,
+    # как кнопки списка: номер вложения в кнопке, а какое это письмо — в FSM.
+    await state.update_data(mail_open_id=item["id"], mail_open_message_id=sent.message_id)
+
+
+@router.callback_query(F.data.startswith("mail:att:"))
+async def send_attachment(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not isinstance(query.message, Message) or data.get("mail_open_message_id") != query.message.message_id:
+        await query.answer(STALE_MAIL_TEXT, show_alert=True)
+        return
+    try:
+        index = int(query.data.rsplit(":", 1)[1])
+    except ValueError:
+        await query.answer(STALE_MAIL_TEXT, show_alert=True)
+        return
+
+    # Ответ на нажатие — сразу: письмо ещё нужно скачать заново.
+    await query.answer()
+    try:
+        raw = await mail_inbox.fetch_message(data["mail_open_id"])
+        name, content = mail_inbox.get_attachment(raw, index)
+    except mail_inbox.MailInboxError:
+        logger.exception("[mail-inbox] письмо для вложения не получено: %s", data["mail_open_id"])
+        await query.message.answer(UNAVAILABLE_TEXT)
+        return
+    except IndexError:
+        await query.message.answer(STALE_MAIL_TEXT)
+        return
+
+    try:
+        await query.message.answer_document(BufferedInputFile(content, filename=name))
+    except TelegramBadRequest:
+        logger.exception("[mail-inbox] Telegram не принял вложение: %s", name)
+        await query.message.answer("❌ Telegram не принял этот файл.")

@@ -11,6 +11,7 @@ import email
 import html
 import json
 import logging
+import mimetypes
 import re
 from datetime import datetime
 from email import policy
@@ -18,7 +19,7 @@ from email.errors import HeaderParseError
 from email.header import decode_header, make_header
 from email.utils import parseaddr
 from html.parser import HTMLParser
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import aiohttp
 
@@ -185,6 +186,48 @@ def _body_text(msg) -> str:
     return ""
 
 
+def _attachments(msg) -> list:
+    """[(имя, часть)] в порядке письма. Порядок стабилен для тех же байтов —
+    по нему кнопка находит файл при повторном скачивании письма."""
+    result = []
+    for i, part in enumerate(msg.iter_attachments()):
+        name = part.get_filename()
+        if not name:
+            # Без имени Telegram файл не примет, а кнопке нужна подпись.
+            name = f"attachment-{i + 1}{mimetypes.guess_extension(part.get_content_type()) or '.bin'}"
+        result.append((name, part))
+    return result
+
+
+def list_attachments(raw: bytes) -> List[dict]:
+    """Вложения письма: [{name, size}], size — в байтах."""
+    msg = email.message_from_bytes(raw, policy=policy.default)
+    return [{"name": name, "size": len(part.get_payload(decode=True) or b"")}
+            for name, part in _attachments(msg)]
+
+
+def get_attachment(raw: bytes, index: int) -> Tuple[str, bytes]:
+    """(имя, содержимое) вложения по номеру. IndexError — если такого нет."""
+    if index < 0:
+        raise IndexError(index)
+    msg = email.message_from_bytes(raw, policy=policy.default)
+    name, part = _attachments(msg)[index]
+    return name, part.get_payload(decode=True) or b""
+
+
+def attachment_label(att: dict) -> str:
+    """«📎 invoice.pdf · 120 КБ» — подпись кнопки вложения."""
+    size = att["size"]
+    if size < 1024:
+        human = f"{size} Б"
+    elif size < 1024 * 1024:
+        human = f"{size // 1024} КБ"
+    else:
+        human = f"{size / 1024 / 1024:.1f} МБ"
+    # Режем имя, а не всю подпись: размер должен остаться виден.
+    return f"📎 {_cut(att['name'], 40)} · {human}"
+
+
 def render_message(raw: bytes, received_at_ms: Optional[int]) -> str:
     """Письмо (.eml) → текст для Telegram (parse_mode=HTML). Всё из письма экранируется."""
     msg = email.message_from_bytes(raw, policy=policy.default)
@@ -211,10 +254,10 @@ def render_message(raw: bytes, received_at_ms: Optional[int]) -> str:
     else:
         lines.append(html.escape(_cut(body, MAX_TEXT_LEN, "\n…обрезано")))
 
-    names = [part.get_filename() or "без имени" for part in msg.iter_attachments()]
+    names = [name for name, _ in _attachments(msg)]
     if names:
         lines.append("")
-        lines.append("📎 Вложения (не пересылаются): " + html.escape(_cut(", ".join(names), MAX_ATTACHMENTS_LEN)))
+        lines.append("📎 Вложения: " + html.escape(_cut(", ".join(names), MAX_ATTACHMENTS_LEN)))
     return "\n".join(lines)
 
 
