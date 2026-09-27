@@ -35,6 +35,12 @@ R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL")
 CF_WORKER_URL = os.getenv("CF_WORKER_URL")
 KV_SYNC_TOKEN = os.getenv("KV_SYNC_TOKEN")
 
+# Почта доменов (info@<domain>): адрес Worker'а mail-inbox и токен ЧТЕНИЯ.
+# Токена записи (RELAY_TOKEN) здесь нет намеренно: он нужен только
+# пересыльщикам и скрипту настройки (mail-inbox/.env), боту — нет.
+MAIL_INBOX_URL = os.getenv("MAIL_INBOX_URL")
+MAIL_READ_TOKEN = os.getenv("MAIL_READ_TOKEN")
+
 # ID пользователей
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
