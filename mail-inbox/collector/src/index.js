@@ -1,13 +1,15 @@
 /**
  * mail-inbox — приёмник писем для раздела бота «📧 Почта доменов».
  *
- * Письма на info@<domain> приходят сюда от пересыльщиков mail-inbox-relay
- * (по одному в каждом Cloudflare-аккаунте), хранятся в приватном R2-бакете и
- * отдаются боту по запросу. Устройство и причины: docs/mail-inbox-design.md.
+ * Письма на любые адреса доменов (catch-all) приходят сюда от пересыльщиков
+ * mail-inbox-relay (по одному в каждом Cloudflare-аккаунте), хранятся в
+ * приватном R2-бакете и отдаются боту по запросу. Устройство и причины:
+ * docs/mail-inbox-design.md.
  *
  *   POST /ingest              — пересыльщик сдаёт письмо (RELAY_TOKEN)
- *   GET  /messages?address=…  — бот берёт 10 последних карточек (READ_TOKEN)
- *   GET  /message?id=…        — бот берёт письмо целиком (READ_TOKEN)
+ *   GET  /messages?domain=…   — 10 последних писем на любые адреса домена (READ_TOKEN)
+ *   GET  /messages?address=…  — 10 последних писем на один адрес (READ_TOKEN)
+ *   GET  /message?id=…        — письмо целиком (READ_TOKEN)
  *
  * Токенов два намеренно: RELAY_TOKEN лежит в чужих аккаунтах, и его утечка
  * должна давать только запись (то же может любой отправитель письма), но не
@@ -27,11 +29,30 @@ const LIST_LIMIT = 10;
  */
 const REV_BASE = 9999999999999;
 
-/** Та же проверка адреса, что в боте (services/mail_inbox.py). */
+/** Те же проверки, что в боте (services/mail_inbox.py). */
+const DOMAIN_RE = /^(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/;
 const ADDRESS_RE = /^[a-z0-9._+-]{1,64}@(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/;
 
-/** Ключ письма: <address>/<revTs>-<rand>.eml */
-const ID_RE = /^[a-z0-9._+-]{1,64}@[a-z0-9.-]{1,253}\/(\d{13})-[0-9a-f]{8}\.eml$/;
+/**
+ * Ключ письма: <domain>/<revTs>-<rand>.eml — по домену, чтобы список домена
+ * (письма на все адреса, catch-all) был одним list по префиксу. До перехода на
+ * catch-all ключи были <address>/… — их тоже принимаем, см. LEGACY_PREFIX.
+ */
+const ID_RE = /^(?:[a-z0-9._+-]{1,64}@)?[a-z0-9.-]{1,253}\/(\d{13})-[0-9a-f]{8}\.eml$/;
+
+/**
+ * ponytail: поиск по точному адресу — фильтр среди 1000 свежих писем домена
+ * (один list). Письмо старше тысячи свежих по домену не найдётся; если упрётся —
+ * второй ключ-индекс <address>/… на каждое письмо.
+ */
+const ADDRESS_SCAN_LIMIT = 1000;
+
+/**
+ * ponytail: письма, пришедшие до перехода на catch-all, лежат под
+ * info@<domain>/… и читаются отдельно. Бакет удаляет письма через 30 дней —
+ * после 2026-10-30 чтение старого префикса можно убрать.
+ */
+const LEGACY_LOCAL_PART = "info";
 
 /** Длина from/subject в customMetadata: тема по RFC может быть почти любой. */
 const META_MAX_CHARS = 200;
@@ -61,12 +82,12 @@ function authorized(request, token) {
   return timingSafeEqual(request.headers.get("authorization") || "", `Bearer ${token}`);
 }
 
-export function buildKey(address, now = Date.now()) {
+export function buildKey(domain, now = Date.now()) {
   const rev = String(REV_BASE - now).padStart(13, "0");
   const rand = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) =>
     b.toString(16).padStart(2, "0"),
   ).join("");
-  return `${address}/${rev}-${rand}.eml`;
+  return `${domain}/${rev}-${rand}.eml`;
 }
 
 /** Время получения письма (мс) из его ключа. */
@@ -97,8 +118,9 @@ async function handleIngest(request, env) {
     return json({ error: "некорректный размер письма" }, 400);
   }
 
-  await env.MAIL.put(buildKey(to), body, {
+  await env.MAIL.put(buildKey(to.split("@")[1]), body, {
     customMetadata: {
+      to,
       from: String(meta.from || "").slice(0, META_MAX_CHARS),
       subject: String(meta.subject || "").slice(0, META_MAX_CHARS),
     },
@@ -107,24 +129,38 @@ async function handleIngest(request, env) {
   return json({ ok: true });
 }
 
+async function listPrefix(env, prefix, limit) {
+  const listed = await env.MAIL.list({ prefix, limit, include: ["customMetadata"] });
+  return listed.objects;
+}
+
 async function handleList(url, request, env) {
   if (!authorized(request, env.READ_TOKEN)) return json({ error: "Доступ запрещён" }, 401);
   const address = (url.searchParams.get("address") || "").trim().toLowerCase();
-  if (!ADDRESS_RE.test(address)) return json({ error: "некорректный адрес" }, 400);
+  const domain = address ? address.split("@")[1] || "" : (url.searchParams.get("domain") || "").trim().toLowerCase();
+  if (address ? !ADDRESS_RE.test(address) : !DOMAIN_RE.test(domain)) {
+    return json({ error: "некорректный домен или адрес" }, 400);
+  }
 
-  const listed = await env.MAIL.list({
-    prefix: `${address}/`,
-    limit: LIST_LIMIT,
-    include: ["customMetadata"],
-  });
+  const legacyAddress = `${LEGACY_LOCAL_PART}@${domain}`;
+  const objects = [
+    ...(await listPrefix(env, `${domain}/`, address ? ADDRESS_SCAN_LIMIT : LIST_LIMIT)),
+    ...(!address || address === legacyAddress ? await listPrefix(env, `${legacyAddress}/`, LIST_LIMIT) : []),
+  ];
   return json(
-    listed.objects.map((o) => ({
-      id: o.key,
-      from: o.customMetadata?.from || "",
-      subject: o.customMetadata?.subject || "",
-      receivedAt: receivedAt(o.key),
-      size: o.size,
-    })),
+    objects
+      .map((o) => ({
+        id: o.key,
+        // У старых писем адреса в метаданных нет — он в самом ключе.
+        to: o.customMetadata?.to || o.key.split("/")[0],
+        from: o.customMetadata?.from || "",
+        subject: o.customMetadata?.subject || "",
+        receivedAt: receivedAt(o.key),
+        size: o.size,
+      }))
+      .filter((item) => !address || item.to === address)
+      .sort((a, b) => b.receivedAt - a.receivedAt)
+      .slice(0, LIST_LIMIT),
   );
 }
 
