@@ -1,8 +1,10 @@
 """
 Тесты раздела «📧 Почта доменов» — то, что проверяется без сети.
 
-  - normalize_address: ошибка здесь покажет пустой ящик вместо писем, и
+  - parse_mail_query: ошибка здесь покажет пустой ящик вместо писем, и
     человек решит, что код не пришёл.
+  - list_messages: домен — письма на все адреса (catch-all), точный адрес —
+    только его письма, чтобы спам на другие адреса не вытеснил нужное.
   - render_message: письма бывают в cp1251, в quoted-printable, только в HTML;
     ссылка «Подтвердить» обязана дожить до Telegram, чужой текст экранируется,
     сообщение не превышает лимит Telegram.
@@ -10,10 +12,12 @@
 
 Запуск: .venv/bin/python -m unittest discover -s tests -v
 """
+import asyncio
 import os
 import sys
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 from email.header import Header
 from email.message import EmailMessage
 
@@ -36,23 +40,44 @@ def kyiv_ms(day, hour=12, minute=41):
     return int(datetime(2026, 9, day, hour, minute, tzinfo=KYIV_TZ).timestamp() * 1000)
 
 
-class NormalizeAddressTest(unittest.TestCase):
-    def test_variants_become_info_address(self):
-        for text in ("site1.com", " Site1.COM ", "info@site1.com", "https://www.site1.com/page?x=1", "site1.com."):
+class ParseMailQueryTest(unittest.TestCase):
+    def test_domain_variants_mean_whole_domain(self):
+        for text in ("site1.com", " Site1.COM ", "https://www.site1.com/page?x=1", "site1.com."):
             with self.subTest(text=text):
-                self.assertEqual(mail_inbox.normalize_address(text), "info@site1.com")
+                self.assertEqual(mail_inbox.parse_mail_query(text), ("site1.com", None))
 
-    def test_other_local_part_kept(self):
-        self.assertEqual(mail_inbox.normalize_address("Admin@site1.com"), "admin@site1.com")
+    def test_address_means_only_that_address(self):
+        self.assertEqual(mail_inbox.parse_mail_query("Facebook@Site1.com"), ("site1.com", "facebook@site1.com"))
+        self.assertEqual(mail_inbox.parse_mail_query("info@site1.com"), ("site1.com", "info@site1.com"))
 
     def test_cyrillic_domain_becomes_punycode(self):
-        self.assertEqual(mail_inbox.normalize_address("сайт.укр"), "info@xn--80aswg.xn--j1amh")
+        self.assertEqual(mail_inbox.parse_mail_query("сайт.укр"), ("xn--80aswg.xn--j1amh", None))
 
     def test_garbage_rejected(self):
         for text in ("", "hello", "site1", "a@b@c", "site one.com", "@site1.com"):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError):
-                    mail_inbox.normalize_address(text)
+                    mail_inbox.parse_mail_query(text)
+
+
+class ListMessagesTest(unittest.TestCase):
+    def _params_for(self, *args):
+        calls = []
+
+        async def fake_get(path, params):
+            calls.append((path, params))
+            return b"[]"
+
+        with patch.object(mail_inbox, "_get", fake_get):
+            asyncio.run(mail_inbox.list_messages(*args))
+        return calls
+
+    def test_domain_asks_for_all_addresses(self):
+        self.assertEqual(self._params_for("site1.com"), [("/messages", {"domain": "site1.com"})])
+
+    def test_address_asks_for_that_address_only(self):
+        self.assertEqual(self._params_for("site1.com", "facebook@site1.com"),
+                         [("/messages", {"address": "facebook@site1.com"})])
 
 
 class ButtonLabelTest(unittest.TestCase):
@@ -79,6 +104,12 @@ class ButtonLabelTest(unittest.TestCase):
         item = dict(self._item(28), **{"from": "=?UTF-8?Q?Doe=2C_John?= <j@x.com>"})
         self.assertIn(" · Doe, John · ", mail_inbox.button_label(item, self.NOW))
 
+    def test_domain_list_shows_recipient(self):
+        # В списке домена письма идут на разные адреса — видно, на какой.
+        item = dict(self._item(28), to="admin@site1.com")
+        self.assertEqual(mail_inbox.button_label(item, self.NOW, with_recipient=True),
+                         "12:41 · admin@ · Google · Код подтверждения")
+
 
 class RenderMessageTest(unittest.TestCase):
     def test_plain_cp1251_quoted_printable(self):
@@ -87,6 +118,12 @@ class RenderMessageTest(unittest.TestCase):
         self.assertIn("Ваш код: 123456", text)
         self.assertIn("<b>Код подтверждения</b>", text)
         self.assertIn("28.09.2026 12:41", text)
+
+    def test_recipient_line(self):
+        # Адрес из конверта, а не заголовок To: при catch-all и скрытой копии
+        # To может быть чужим.
+        raw = build_mail("текст").as_bytes()
+        self.assertIn("Кому: admin@site1.com", mail_inbox.render_message(raw, None, "admin@site1.com"))
 
     def test_html_keeps_link_address(self):
         raw = build_mail('<p>Нажмите <a href="https://example.com/verify?t=1&amp;u=2">Подтвердить</a></p>'

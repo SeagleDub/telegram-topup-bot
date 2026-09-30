@@ -28,7 +28,8 @@ from services.ecards import KYIV_TZ
 
 logger = logging.getLogger(__name__)
 
-# Та же проверка, что в mail-inbox/collector/src/index.js (ADDRESS_RE).
+# Те же проверки, что в mail-inbox/collector/src/index.js (DOMAIN_RE, ADDRESS_RE).
+_DOMAIN_RE = re.compile(r"^(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$")
 _ADDRESS_RE = re.compile(r"^[a-z0-9._+-]{1,64}@(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$")
 
 # Лимиты — в единицах UTF-16: так длину считает Telegram (4096 на сообщение,
@@ -53,13 +54,15 @@ def is_configured() -> bool:
 # Ввод пользователя и список
 # --------------------------------------------------------------------------- #
 
-def normalize_address(text: str) -> str:
-    """site1.com / info@Site1.com / https://www.site1.com/x → info@site1.com.
+def parse_mail_query(text: str) -> Tuple[str, Optional[str]]:
+    """Ввод пользователя → (домен, адрес или None).
 
+    site1.com / https://www.site1.com/x → ("site1.com", None) — все адреса домена;
+    Facebook@Site1.com → ("site1.com", "facebook@site1.com") — только этот адрес.
     ValueError — если на домен не похоже.
     """
     value = (text or "").strip().lower()
-    local, _, domain = value.rpartition("@") if "@" in value else ("info", "@", value)
+    local, at, domain = value.rpartition("@") if "@" in value else ("", "", value)
     domain = re.sub(r"^[a-z][a-z0-9+.-]*://", "", domain)
     domain = re.split(r"[/?#:]", domain, maxsplit=1)[0].strip(".")
     if domain.startswith("www."):
@@ -69,10 +72,14 @@ def normalize_address(text: str) -> str:
         domain = domain.encode("idna").decode("ascii")
     except UnicodeError:
         raise ValueError(f"не похоже на домен: {text!r}") from None
+    if not _DOMAIN_RE.match(domain):
+        raise ValueError(f"не похоже на домен: {text!r}")
+    if not at:
+        return domain, None
     address = f"{local}@{domain}"
     if not _ADDRESS_RE.match(address):
-        raise ValueError(f"не похоже на домен: {text!r}")
-    return address
+        raise ValueError(f"не похоже на адрес: {text!r}")
+    return domain, address
 
 
 def decode_header_value(value: Optional[str]) -> str:
@@ -93,16 +100,22 @@ def _cut(text: str, limit: int, tail: str = "…") -> str:
     return encoded[:keep].decode("utf-16-le", "ignore").rstrip() + tail
 
 
-def button_label(item: dict, now: datetime) -> str:
-    """«12:41 · Google · Код подтверждения» — подпись кнопки письма в списке."""
+def button_label(item: dict, now: datetime, with_recipient: bool = False) -> str:
+    """«12:41 · Google · Код подтверждения» — подпись кнопки письма в списке.
+
+    with_recipient — для списка всего домена: письма идут на разные адреса, и
+    видно, на какой («12:41 · admin@ · Google · …»).
+    """
     received = datetime.fromtimestamp(item["receivedAt"] / 1000, KYIV_TZ)
-    when = received.strftime("%H:%M" if received.date() == now.date() else "%d.%m %H:%M")
+    parts = [received.strftime("%H:%M" if received.date() == now.date() else "%d.%m %H:%M")]
+    if with_recipient:
+        parts.append((item.get("to") or "?").split("@")[0] + "@")
     # Сначала разбор адреса, потом декодирование имени: декодированная запятая
     # («Doe, John») ломает parseaddr.
     name, addr = parseaddr(item.get("from") or "")
-    name = decode_header_value(name)
-    subject = decode_header_value(item.get("subject")) or "(без темы)"
-    return _cut(f"{when} · {name or addr or '?'} · {subject}", MAX_LABEL_LEN)
+    parts.append(decode_header_value(name) or addr or "?")
+    parts.append(decode_header_value(item.get("subject")) or "(без темы)")
+    return _cut(" · ".join(parts), MAX_LABEL_LEN)
 
 
 # --------------------------------------------------------------------------- #
@@ -228,13 +241,19 @@ def attachment_label(att: dict) -> str:
     return f"📎 {_cut(att['name'], 40)} · {human}"
 
 
-def render_message(raw: bytes, received_at_ms: Optional[int]) -> str:
-    """Письмо (.eml) → текст для Telegram (parse_mode=HTML). Всё из письма экранируется."""
+def render_message(raw: bytes, received_at_ms: Optional[int], recipient: Optional[str] = None) -> str:
+    """Письмо (.eml) → текст для Telegram (parse_mode=HTML). Всё из письма экранируется.
+
+    recipient — адрес из конверта (кому письмо реально пришло), а не заголовок
+    To: при catch-all и скрытой копии в To может стоять чужой адрес.
+    """
     msg = email.message_from_bytes(raw, policy=policy.default)
     subject = _cut(str(msg.get("subject") or "").strip() or "(без темы)", MAX_HEADER_LEN)
     sender = _cut(str(msg.get("from") or "").strip() or "?", MAX_HEADER_LEN)
 
     lines = [f"✉️ <b>{html.escape(subject)}</b>", f"От: {html.escape(sender)}"]
+    if recipient:
+        lines.append(f"Кому: {html.escape(recipient)}")
     if received_at_ms:
         received = datetime.fromtimestamp(received_at_ms / 1000, KYIV_TZ)
         lines.append(f"Получено: {received.strftime('%d.%m.%Y %H:%M')}")
@@ -279,9 +298,12 @@ async def _get(path: str, params: dict) -> bytes:
         raise MailInboxError(f"{path}: {type(e).__name__}: {e}") from e
 
 
-async def list_messages(address: str) -> List[dict]:
-    """10 последних писем адреса, новые первыми: [{id, from, subject, receivedAt, size}]."""
-    body = await _get("/messages", {"address": address})
+async def list_messages(domain: str, address: Optional[str] = None) -> List[dict]:
+    """10 последних писем, новые первыми: [{id, to, from, subject, receivedAt, size}].
+
+    Без address — на любые адреса домена, с address — только на этот адрес.
+    """
+    body = await _get("/messages", {"address": address} if address else {"domain": domain})
     try:
         return json.loads(body)
     except ValueError as e:
