@@ -1,10 +1,12 @@
 """
-Настройка почты info@<domain> по CSV.
+Настройка почты доменов по CSV: письма на любой адрес домена → бот.
 
 Для каждой строки: включает Email Routing на домене, заливает в аккаунт
-пересыльщика mail-inbox-relay и создаёт правило info@<domain> → пересыльщик.
-Домены с чужой почтой, занятым info@ или своим SPF не трогает — только пишет
-причину в отчёт. Устройство: docs/mail-inbox-design.md, раздел 5.
+пересыльщика mail-inbox-relay и направляет в него все адреса домена (catch-all).
+Правила info@ от версии до catch-all удаляет — повторный запуск по тому же CSV
+переводит на catch-all уже настроенные домены. Домены с чужой почтой, чужим
+catch-all или своим SPF не трогает — только пишет причину в отчёт.
+Устройство: docs/mail-inbox-design.md, раздел 5.
 
 Запуск (из корня репозитория):
     .venv/bin/python mail-inbox/setup/setup_routing.py domains.csv --dry-run
@@ -24,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -178,20 +180,22 @@ class CloudflareAPI:
 class Plan:
     skip: Optional[str] = None
     enable_routing: bool = False
-    create_rule: bool = False
-    enable_rule: Optional[dict] = None  # наше правило, но выключенное
+    set_catch_all: bool = False
+    # Наши правила для отдельных адресов (info@ от версии до catch-all):
+    # catch-all их заменяет.
+    delete_rules: List[dict] = field(default_factory=list)
 
     @property
     def nothing_to_do(self) -> bool:
-        return not (self.enable_routing or self.create_rule or self.enable_rule)
+        return not (self.enable_routing or self.set_catch_all or self.delete_rules)
 
     def describe(self) -> str:
         steps = ["включить Email Routing"] if self.enable_routing else []
         steps.append("залить пересыльщика")
-        if self.create_rule:
-            steps.append("создать правило info@")
-        if self.enable_rule:
-            steps.append("включить выключенное правило info@")
+        if self.set_catch_all:
+            steps.append("направить все адреса домена в бота (catch-all)")
+        if self.delete_rules:
+            steps.append(f"удалить старые правила info@ ({len(self.delete_rules)})")
         return ", ".join(steps)
 
 
@@ -199,11 +203,8 @@ def _txt_value(record: dict) -> str:
     return (record.get("content") or "").strip().strip('"')
 
 
-def _matches(rule: dict, address: str) -> bool:
-    return any(
-        m.get("type") == "literal" and m.get("field") == "to" and (m.get("value") or "").lower() == address
-        for m in rule.get("matchers") or []
-    )
+def _is_literal(rule: dict) -> bool:
+    return any(m.get("type") == "literal" for m in rule.get("matchers") or [])
 
 
 def _is_ours(rule: dict) -> bool:
@@ -220,8 +221,6 @@ def _describe_rule(rule: dict) -> str:
 def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enabled: bool, rules: list,
                 routing_status: str = "ready", catch_all: Optional[dict] = None) -> Plan:
     """Что делать с доменом. Чистая функция: вся логика «трогать или нет» здесь."""
-    address = f"info@{domain}"
-
     foreign_mx = sorted({
         # «.» — null MX (RFC 7505): домен явно не принимает почту. Тоже чужое
         # решение, и в отчёте оно должно быть видно, а не пустой строкой.
@@ -250,20 +249,18 @@ def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enable
         if own_spf:
             return Plan(skip="есть свой SPF: " + own_spf[0])
 
-    # Catch-all уже доставляет и info@: правило для info@ точнее catch-all и
-    # молча увело бы эти письма у того, кто их сейчас получает.
-    if catch_all and catch_all.get("enabled") and any(
+    catch_all_enabled = bool(catch_all and catch_all.get("enabled"))
+    # Чужой catch-all уже доставляет почту домена кому-то — наш увёл бы её.
+    if catch_all_enabled and not _is_ours(catch_all) and any(
             a.get("type") != "drop" for a in catch_all.get("actions") or []):
         return Plan(skip="catch-all уже настроен: " + _describe_rule(catch_all))
 
-    rule = next((r for r in rules if _matches(r, address)), None)
-    if rule is not None and not _is_ours(rule):
-        return Plan(skip="info@ уже настроен: " + _describe_rule(rule))
-
     return Plan(
         enable_routing=not routing_enabled,
-        create_rule=rule is None,
-        enable_rule=rule if rule is not None and not rule.get("enabled", True) else None,
+        set_catch_all=not (catch_all_enabled and _is_ours(catch_all)),
+        # Только наши и только для отдельных адресов. Чужие правила точнее
+        # catch-all и продолжат работать — эти адреса просто не попадут в бота.
+        delete_rules=[r for r in rules if _is_ours(r) and _is_literal(r)],
     )
 
 
@@ -346,27 +343,22 @@ def process(row: Row, api: CloudflareAPI, config: Optional[dict], uploaded: set,
         # Без name: сам домен включается по умолчанию, а name — только для
         # поддоменов (сам домен в нём Cloudflare отвергает ошибкой 2007).
         api.call("POST", f"/zones/{zone_id}/email/routing/dns", {})
-    if plan.create_rule:
-        api.call("POST", f"/zones/{zone_id}/email/routing/rules", {
-            "name": f"info@ → {RELAY_NAME}",
+    if plan.set_catch_all:
+        api.call("PUT", f"/zones/{zone_id}/email/routing/rules/catch_all", {
+            "name": f"все адреса → {RELAY_NAME}",
             "enabled": True,
-            "matchers": [{"type": "literal", "field": "to", "value": f"info@{row.domain}"}],
+            "matchers": [{"type": "all"}],
             "actions": [{"type": "worker", "value": [RELAY_NAME]}],
         })
-    if plan.enable_rule:
-        rule = plan.enable_rule
-        api.call("PUT", f"/zones/{zone_id}/email/routing/rules/{rule['id']}", {
-            "name": rule.get("name") or f"info@ → {RELAY_NAME}",
-            "enabled": True,
-            "matchers": rule["matchers"],
-            "actions": rule["actions"],
-            "priority": rule.get("priority", 0),
-        })
+    # Старые правила — только после catch-all: иначе письма на info@ в
+    # промежутке не попали бы никуда.
+    for rule in plan.delete_rules:
+        api.call("DELETE", f"/zones/{zone_id}/email/routing/rules/{rule['id']}")
     return (ALREADY if plan.nothing_to_do else OK), plan.describe()
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Настройка почты info@<domain> по CSV")
+    parser = argparse.ArgumentParser(description="Настройка почты доменов (catch-all) по CSV")
     parser.add_argument("csv_path", type=Path)
     parser.add_argument("--dry-run", action="store_true", help="только проверить и показать план, ничего не менять")
     args = parser.parse_args(argv)

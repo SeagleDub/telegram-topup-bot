@@ -21,12 +21,15 @@ import setup_routing as sr
 
 DOMAIN = "site1.com"
 CF_MX = [{"name": DOMAIN, "content": "route1.mx.cloudflare.net"}]
-OUR_RULE = {
+# Правило, которое ставила версия до catch-all: info@ → наш пересыльщик.
+OLD_INFO_RULE = {
     "id": "r1",
     "enabled": True,
     "matchers": [{"type": "literal", "field": "to", "value": "info@site1.com"}],
     "actions": [{"type": "worker", "value": ["mail-inbox-relay"]}],
 }
+OUR_CATCH_ALL = {"enabled": True, "matchers": [{"type": "all"}],
+                 "actions": [{"type": "worker", "value": ["mail-inbox-relay"]}]}
 
 
 class PlanDomainTest(unittest.TestCase):
@@ -34,8 +37,8 @@ class PlanDomainTest(unittest.TestCase):
         plan = sr.plan_domain(DOMAIN, [], [], False, [])
         self.assertIsNone(plan.skip)
         self.assertTrue(plan.enable_routing)
-        self.assertTrue(plan.create_rule)
-        self.assertIsNone(plan.enable_rule)
+        self.assertTrue(plan.set_catch_all)
+        self.assertEqual(plan.delete_rules, [])
 
     def test_foreign_mx_is_skipped(self):
         mx = [{"name": DOMAIN, "content": "aspmx.l.google.com"}]
@@ -57,40 +60,61 @@ class PlanDomainTest(unittest.TestCase):
         txt = [{"name": DOMAIN, "content": "v=spf1 include:_spf.mx.cloudflare.net ~all"}]
         self.assertIsNone(sr.plan_domain(DOMAIN, CF_MX, txt, False, []).skip)
 
-    def test_info_forwarded_elsewhere_is_skipped(self):
-        rule = dict(OUR_RULE, actions=[{"type": "forward", "value": ["boss@gmail.com"]}])
-        self.assertIn("boss@gmail.com", sr.plan_domain(DOMAIN, CF_MX, [], True, [rule]).skip)
+    def test_domain_from_info_version_switches_to_catch_all(self):
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [OLD_INFO_RULE])
+        self.assertIsNone(plan.skip)
+        self.assertFalse(plan.enable_routing)
+        self.assertTrue(plan.set_catch_all)
+        self.assertEqual(plan.delete_rules, [OLD_INFO_RULE])
 
-    def test_rule_match_ignores_case(self):
-        rule = dict(OUR_RULE, matchers=[{"type": "literal", "field": "to", "value": "INFO@Site1.com"}],
-                    actions=[{"type": "drop"}])
-        self.assertIsNotNone(sr.plan_domain(DOMAIN, CF_MX, [], True, [rule]).skip)
+    def test_disabled_old_rule_is_deleted_too(self):
+        rule = dict(OLD_INFO_RULE, enabled=False)
+        self.assertEqual(sr.plan_domain(DOMAIN, CF_MX, [], True, [rule]).delete_rules, [rule])
+
+    def test_our_catch_all_in_rules_list_is_never_deleted(self):
+        # Схема API допускает matcher «all» в общем списке правил: наш же
+        # catch-all не должен попасть под удаление старых правил.
+        catch_all_rule = dict(OUR_CATCH_ALL, id="c1")
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [catch_all_rule, OLD_INFO_RULE], catch_all=OUR_CATCH_ALL)
+        self.assertEqual(plan.delete_rules, [OLD_INFO_RULE])
+
+    def test_foreign_literal_rules_are_left_alone(self):
+        # Чужая пересылка отдельного адреса точнее catch-all и продолжит работать:
+        # не конфликт, и удалять её не наше дело.
+        rule = dict(OLD_INFO_RULE, actions=[{"type": "forward", "value": ["boss@gmail.com"]}])
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [rule])
+        self.assertIsNone(plan.skip)
+        self.assertEqual(plan.delete_rules, [])
 
     def test_configured_domain_needs_nothing(self):
-        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [OUR_RULE])
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=OUR_CATCH_ALL)
         self.assertIsNone(plan.skip)
         self.assertTrue(plan.nothing_to_do)
 
-    def test_our_disabled_rule_gets_enabled(self):
-        rule = dict(OUR_RULE, enabled=False)
-        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [rule])
-        self.assertIs(plan.enable_rule, rule)
-        self.assertFalse(plan.create_rule)
+    def test_our_disabled_catch_all_gets_enabled(self):
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=dict(OUR_CATCH_ALL, enabled=False))
+        self.assertTrue(plan.set_catch_all)
 
-    def test_catch_all_forward_is_skipped(self):
-        # Catch-all уже доставляет и info@ — наше правило увело бы эти письма.
-        catch_all = {"enabled": True, "actions": [{"type": "forward", "value": ["boss@gmail.com"]}]}
-        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all)
-        self.assertIn("boss@gmail.com", plan.skip)
+    def test_foreign_catch_all_is_skipped(self):
+        # Чужой catch-all уже доставляет почту домена кому-то — не трогаем.
+        for action in ({"type": "forward", "value": ["boss@gmail.com"]},
+                       {"type": "worker", "value": ["someone-elses-worker"]}):
+            with self.subTest(action=action):
+                catch_all = {"enabled": True, "actions": [action]}
+                plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all)
+                self.assertIn(action["value"][0], plan.skip)
 
-    def test_catch_all_drop_or_disabled_is_fine(self):
+    def test_catch_all_drop_or_disabled_is_replaced_by_ours(self):
         for catch_all in ({"enabled": True, "actions": [{"type": "drop"}]},
                           {"enabled": False, "actions": [{"type": "forward", "value": ["x@y.com"]}]}):
             with self.subTest(catch_all=catch_all):
-                self.assertIsNone(sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all).skip)
+                plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all)
+                self.assertIsNone(plan.skip)
+                self.assertTrue(plan.set_catch_all)
 
     def test_broken_routing_is_reported_not_called_configured(self):
-        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [OUR_RULE], routing_status="misconfigured")
+        plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [], routing_status="misconfigured",
+                              catch_all=OUR_CATCH_ALL)
         self.assertIn("misconfigured", plan.skip)
 
     def test_null_mx_reason_is_readable(self):
@@ -175,10 +199,11 @@ class CloudflareAPITest(unittest.TestCase):
 class FakeAPI:
     """Аккаунт a1 с активной зоной z1 без почты; записывает вызовы."""
 
-    def __init__(self, routing=None):
+    def __init__(self, routing=None, rules=()):
         self.calls = []
         self.bodies = {}
         self.routing = routing or {"enabled": False, "status": "unconfigured"}
+        self.rules = list(rules)
 
     def call(self, method, path, body=None, *, raw=None, content_type=None):
         self.calls.append((method, path.split("?")[0]))
@@ -193,7 +218,7 @@ class FakeAPI:
 
     def list_all(self, path, per_page):
         self.calls.append(("GET", path))
-        return []
+        return list(self.rules)
 
     def writes(self):
         return [c for c in self.calls if c[0] != "GET"]
@@ -212,7 +237,27 @@ class ProcessTest(unittest.TestCase):
         self.assertEqual(api.writes(), [
             ("PUT", "/accounts/a1/workers/scripts/mail-inbox-relay"),
             ("POST", "/zones/z1/email/routing/dns"),
-            ("POST", "/zones/z1/email/routing/rules"),
+            ("PUT", "/zones/z1/email/routing/rules/catch_all"),
+        ])
+
+    def test_catch_all_points_every_address_to_relay(self):
+        api = FakeAPI()
+        sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
+        body = api.bodies[("PUT", "/zones/z1/email/routing/rules/catch_all")]
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["matchers"], [{"type": "all"}])
+        self.assertEqual(body["actions"], [{"type": "worker", "value": ["mail-inbox-relay"]}])
+
+    def test_old_info_rule_deleted_only_after_catch_all_is_on(self):
+        # Сначала catch-all, потом удаление: иначе письма на info@ в промежутке
+        # не попали бы никуда.
+        api = FakeAPI(routing={"enabled": True, "status": "ready"}, rules=[OLD_INFO_RULE])
+        status, _ = sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
+        self.assertEqual(status, sr.OK)
+        self.assertEqual(api.writes(), [
+            ("PUT", "/accounts/a1/workers/scripts/mail-inbox-relay"),
+            ("PUT", "/zones/z1/email/routing/rules/catch_all"),
+            ("DELETE", "/zones/z1/email/routing/rules/r1"),
         ])
 
     def test_enable_routing_on_apex_sends_no_name(self):
@@ -233,7 +278,7 @@ class ProcessTest(unittest.TestCase):
         api, uploaded = FakeAPI(), set()
         for row in (sr.Row(1, "a@b.com", "t", DOMAIN), sr.Row(2, "a@b.com", "t", "site2.com")):
             sr.process(row, api, CONFIG, uploaded, dry_run=False)
-        self.assertEqual([c for c in api.writes() if c[0] == "PUT"],
+        self.assertEqual([c for c in api.writes() if "/workers/scripts/" in c[1]],
                          [("PUT", "/accounts/a1/workers/scripts/mail-inbox-relay")])
 
 
