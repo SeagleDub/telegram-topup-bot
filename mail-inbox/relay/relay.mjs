@@ -1,9 +1,9 @@
 /**
- * mail-inbox-relay — пересыльщик почты info@<domain>.
+ * mail-inbox-relay — пересыльщик почты доменов.
  *
  * Стоит в каждом Cloudflare-аккаунте из CSV (заливает его
- * mail-inbox/setup/setup_routing.py, не wrangler). Правило Email Routing
- * «info@<domain> → mail-inbox-relay» отдаёт ему письмо, он сдаёт письмо
+ * mail-inbox/setup/setup_routing.py, не wrangler). Catch-all Email Routing
+ * «любой адрес домена → mail-inbox-relay» отдаёт ему письмо, он сдаёт письмо
  * центральному Worker'у mail-inbox и больше ничего не делает.
  *
  * Зачем он нужен: Email Routing отдаёт письмо только Worker'у того же

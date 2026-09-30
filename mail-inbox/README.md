@@ -1,6 +1,7 @@
-# mail-inbox — почта info@<domain> для бота
+# mail-inbox — почта доменов для бота
 
-Письма на `info@<domain>` доменов из CSV попадают в раздел бота «📧 Почта доменов».
+Письма на любые адреса доменов из CSV (catch-all) попадают в раздел бота
+«📧 Почта доменов». В боте — домен (все адреса) или точный адрес (только он).
 Дизайн и причины решений: [docs/mail-inbox-design.md](../docs/mail-inbox-design.md).
 
 ```
@@ -41,7 +42,9 @@ npx wrangler secret put READ_TOKEN      # openssl rand -hex 32, другой
 ```
 
 CSV: колонка 1 — `email:token`, колонка 3 — домен. Отчёт — `domains.report.csv`
-рядом с CSV. Повторный запуск безопасен и обновляет пересыльщика во всех аккаунтах.
+рядом с CSV. Повторный запуск безопасен: обновляет пересыльщика во всех аккаунтах
+и переводит домены, настроенные на `info@`, на catch-all (старое правило `info@`
+удаляется после включения catch-all). Домен с чужим catch-all пропускается.
 Права API Token: Zone Read, DNS Read, Zone Settings Edit, Email Routing Rules Edit,
 Workers Scripts Edit.
 
