@@ -110,6 +110,13 @@ class ButtonLabelTest(unittest.TestCase):
         self.assertEqual(mail_inbox.button_label(item, self.NOW, with_recipient=True),
                          "12:41 · admin@ · Google · Код подтверждения")
 
+    def test_long_random_recipient_does_not_eat_the_label(self):
+        # Спам на catch-all приходит на длинные случайные адреса — отправитель и
+        # тема должны остаться видны.
+        item = dict(self._item(28), to="x" * 64 + "@site1.com")
+        label = mail_inbox.button_label(item, self.NOW, with_recipient=True)
+        self.assertIn("…@ · Google · ", label)
+
 
 class RenderMessageTest(unittest.TestCase):
     def test_plain_cp1251_quoted_printable(self):
@@ -118,6 +125,17 @@ class RenderMessageTest(unittest.TestCase):
         self.assertIn("Ваш код: 123456", text)
         self.assertIn("<b>Код подтверждения</b>", text)
         self.assertIn("28.09.2026 12:41", text)
+
+    def test_worst_case_mail_fits_telegram_limit(self):
+        # Всё длинное сразу: тема, отправитель, получатель на 318 символов,
+        # эмодзи в тексте, много вложений.
+        msg = build_mail("😀" * 5000, subject="т" * 1000)
+        msg.replace_header("From", "Я" * 500 + " <a@b.com>")
+        for i in range(40):
+            msg.add_attachment(b"x", maintype="application", subtype="pdf", filename=f"файл-{i:02d}-" + "д" * 30 + ".pdf")
+        recipient = "x" * 64 + "@" + ".".join(["a" * 60] * 4) + ".com"
+        text = mail_inbox.render_message(msg.as_bytes(), kyiv_ms(28), recipient)
+        self.assertLess(len(text.encode("utf-16-le")) // 2, 4096)
 
     def test_recipient_line(self):
         # Адрес из конверта, а не заголовок To: при catch-all и скрытой копии

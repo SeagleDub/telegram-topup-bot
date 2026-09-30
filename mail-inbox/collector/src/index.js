@@ -34,16 +34,24 @@ const DOMAIN_RE = /^(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/;
 const ADDRESS_RE = /^[a-z0-9._+-]{1,64}@(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$/;
 
 /**
+ * Для приёма — мягче: catch-all доставляет любой адрес («o'neil@», «a=b@»), а в
+ * ключ попадает только домен. Отказ здесь — потерянное письмо: пересыльщик 4xx
+ * не повторяет. Строго проверяется домен, часть до @ — только без пробелов, @
+ * и угловых скобок.
+ */
+const INGEST_ADDRESS_RE = /^[^\s@<>"]{1,64}@((?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63})$/;
+
+/**
  * Ключ письма: <domain>/<revTs>-<rand>.eml — по домену, чтобы список домена
  * (письма на все адреса, catch-all) был одним list по префиксу. До перехода на
- * catch-all ключи были <address>/… — их тоже принимаем, см. LEGACY_PREFIX.
+ * catch-all ключи были <address>/… — их тоже принимаем, см. LEGACY_LOCAL_PART.
  */
 const ID_RE = /^(?:[a-z0-9._+-]{1,64}@)?[a-z0-9.-]{1,253}\/(\d{13})-[0-9a-f]{8}\.eml$/;
 
 /**
  * ponytail: поиск по точному адресу — фильтр среди 1000 свежих писем домена
- * (один list). Письмо старше тысячи свежих по домену не найдётся; если упрётся —
- * второй ключ-индекс <address>/… на каждое письмо.
+ * (постранично). Письмо старше тысячи свежих по домену не найдётся; если
+ * упрётся — второй ключ-индекс <address>/… на каждое письмо.
  */
 const ADDRESS_SCAN_LIMIT = 1000;
 
@@ -106,7 +114,8 @@ async function handleIngest(request, env) {
     return json({ error: "некорректный X-Mail-Meta" }, 400);
   }
   const to = String(meta?.to || "").trim().toLowerCase();
-  if (!ADDRESS_RE.test(to)) return json({ error: "некорректный адрес" }, 400);
+  const toMatch = INGEST_ADDRESS_RE.exec(to);
+  if (!toMatch) return json({ error: "некорректный адрес" }, 400);
 
   // Заявленный размер проверяется до чтения тела: 100 МБ мусора не должны
   // попасть в память Worker'а.
@@ -118,7 +127,7 @@ async function handleIngest(request, env) {
     return json({ error: "некорректный размер письма" }, 400);
   }
 
-  await env.MAIL.put(buildKey(to.split("@")[1]), body, {
+  await env.MAIL.put(buildKey(toMatch[1]), body, {
     customMetadata: {
       to,
       from: String(meta.from || "").slice(0, META_MAX_CHARS),
@@ -129,9 +138,41 @@ async function handleIngest(request, env) {
   return json({ ok: true });
 }
 
-async function listPrefix(env, prefix, limit) {
-  const listed = await env.MAIL.list({ prefix, limit, include: ["customMetadata"] });
-  return listed.objects;
+function toItem(o) {
+  return {
+    id: o.key,
+    // У старых писем адреса в метаданных нет — он в самом ключе.
+    to: o.customMetadata?.to || o.key.split("/")[0],
+    from: o.customMetadata?.from || "",
+    subject: o.customMetadata?.subject || "",
+    receivedAt: receivedAt(o.key),
+    size: o.size,
+  };
+}
+
+/**
+ * Письма под префиксом (новые первыми), подходящие под keep: страница за
+ * страницей, пока не найдено LIST_LIMIT или не просмотрено cap. R2 с include
+ * может отдать за раз меньше limit — без курсора поиск по адресу видел бы
+ * только первую страницу, и спам выше нужного письма его бы прятал.
+ */
+async function scanPrefix(env, prefix, keep, cap) {
+  const found = [];
+  let cursor;
+  let scanned = 0;
+  do {
+    const page = await env.MAIL.list({
+      prefix,
+      limit: Math.min(1000, cap - scanned),
+      include: ["customMetadata"],
+      cursor,
+    });
+    if (!page.objects.length) break;
+    scanned += page.objects.length;
+    found.push(...page.objects.map(toItem).filter(keep));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor && scanned < cap && found.length < LIST_LIMIT);
+  return found;
 }
 
 async function handleList(url, request, env) {
@@ -142,26 +183,13 @@ async function handleList(url, request, env) {
     return json({ error: "некорректный домен или адрес" }, 400);
   }
 
+  const keep = (item) => !address || item.to === address;
   const legacyAddress = `${LEGACY_LOCAL_PART}@${domain}`;
-  const objects = [
-    ...(await listPrefix(env, `${domain}/`, address ? ADDRESS_SCAN_LIMIT : LIST_LIMIT)),
-    ...(!address || address === legacyAddress ? await listPrefix(env, `${legacyAddress}/`, LIST_LIMIT) : []),
+  const items = [
+    ...(await scanPrefix(env, `${domain}/`, keep, address ? ADDRESS_SCAN_LIMIT : LIST_LIMIT)),
+    ...(!address || address === legacyAddress ? await scanPrefix(env, `${legacyAddress}/`, keep, LIST_LIMIT) : []),
   ];
-  return json(
-    objects
-      .map((o) => ({
-        id: o.key,
-        // У старых писем адреса в метаданных нет — он в самом ключе.
-        to: o.customMetadata?.to || o.key.split("/")[0],
-        from: o.customMetadata?.from || "",
-        subject: o.customMetadata?.subject || "",
-        receivedAt: receivedAt(o.key),
-        size: o.size,
-      }))
-      .filter((item) => !address || item.to === address)
-      .sort((a, b) => b.receivedAt - a.receivedAt)
-      .slice(0, LIST_LIMIT),
-  );
+  return json(items.sort((a, b) => b.receivedAt - a.receivedAt).slice(0, LIST_LIMIT));
 }
 
 async function handleGet(url, request, env) {

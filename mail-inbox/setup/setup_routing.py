@@ -181,9 +181,13 @@ class Plan:
     skip: Optional[str] = None
     enable_routing: bool = False
     set_catch_all: bool = False
-    # Наши правила для отдельных адресов (info@ от версии до catch-all):
-    # catch-all их заменяет.
+    # Наше правило info@<домен> от версии до catch-all: catch-all его заменяет.
     delete_rules: List[dict] = field(default_factory=list)
+    # Для отчёта: чужой catch-all, который перезапишется, и адреса, которые из-за
+    # чужих правил до бота не дойдут. Иначе старая настройка теряется бесследно,
+    # а байер видит пустой список без объяснения.
+    replaced_catch_all: Optional[str] = None
+    bypass: List[str] = field(default_factory=list)
 
     @property
     def nothing_to_do(self) -> bool:
@@ -194,8 +198,12 @@ class Plan:
         steps.append("залить пересыльщика")
         if self.set_catch_all:
             steps.append("направить все адреса домена в бота (catch-all)")
+        if self.replaced_catch_all:
+            steps.append(f"заменён чужой catch-all: {self.replaced_catch_all}")
         if self.delete_rules:
-            steps.append(f"удалить старые правила info@ ({len(self.delete_rules)})")
+            steps.append("удалить старое правило info@")
+        if self.bypass:
+            steps.append("мимо бота (свои правила): " + "; ".join(self.bypass))
         return ", ".join(steps)
 
 
@@ -203,8 +211,8 @@ def _txt_value(record: dict) -> str:
     return (record.get("content") or "").strip().strip('"')
 
 
-def _is_literal(rule: dict) -> bool:
-    return any(m.get("type") == "literal" for m in rule.get("matchers") or [])
+def _literal_addresses(rule: dict) -> List[str]:
+    return [(m.get("value") or "").lower() for m in rule.get("matchers") or [] if m.get("type") == "literal"]
 
 
 def _is_ours(rule: dict) -> bool:
@@ -255,12 +263,24 @@ def plan_domain(domain: str, mx_records: list, txt_records: list, routing_enable
             a.get("type") != "drop" for a in catch_all.get("actions") or []):
         return Plan(skip="catch-all уже настроен: " + _describe_rule(catch_all))
 
+    set_catch_all = not (catch_all_enabled and _is_ours(catch_all))
+    replaced = None
+    if set_catch_all and catch_all and not _is_ours(catch_all) and (
+            catch_all_enabled or any(a.get("type") != "drop" for a in catch_all.get("actions") or [])):
+        replaced = _describe_rule(catch_all) + ("" if catch_all_enabled else " (был выключен)")
+
     return Plan(
         enable_routing=not routing_enabled,
-        set_catch_all=not (catch_all_enabled and _is_ours(catch_all)),
-        # Только наши и только для отдельных адресов. Чужие правила точнее
-        # catch-all и продолжат работать — эти адреса просто не попадут в бота.
-        delete_rules=[r for r in rules if _is_ours(r) and _is_literal(r)],
+        set_catch_all=set_catch_all,
+        replaced_catch_all=replaced,
+        # Только наше и только info@<домен> — его ставила версия до catch-all.
+        # Правило на другой адрес или поддомен — ручное (catch-all покрывает
+        # только сам домен), удалять его нельзя.
+        delete_rules=[r for r in rules if _is_ours(r) and _literal_addresses(r) == [f"info@{domain}"]],
+        # Чужие правила точнее catch-all и продолжат работать — эти адреса просто
+        # не попадут в бота.
+        bypass=[f"{', '.join(_literal_addresses(r))} → {_describe_rule(r)}"
+                for r in rules if not _is_ours(r) and r.get("enabled", True) and _literal_addresses(r)],
     )
 
 
@@ -353,7 +373,13 @@ def process(row: Row, api: CloudflareAPI, config: Optional[dict], uploaded: set,
     # Старые правила — только после catch-all: иначе письма на info@ в
     # промежутке не попали бы никуда.
     for rule in plan.delete_rules:
-        api.call("DELETE", f"/zones/{zone_id}/email/routing/rules/{rule['id']}")
+        try:
+            api.call("DELETE", f"/zones/{zone_id}/email/routing/rules/{rule['id']}")
+        except CFError as e:
+            # 404 — правила уже нет (например, прошлый запуск упал после
+            # удаления): домен в нужном состоянии, это не ошибка.
+            if e.status != 404:
+                raise
     return (ALREADY if plan.nothing_to_do else OK), plan.describe()
 
 

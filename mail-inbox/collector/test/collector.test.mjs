@@ -22,7 +22,11 @@ const RELAY_TOKEN = "relay-token";
 const READ_TOKEN = "read-token";
 const META = { to: "Admin@Site1.com", from: "Google <no-reply@google.com>", subject: "Код" };
 
-/** Минимальная замена R2: put / list (по алфавиту, с limit) / get. */
+/**
+ * Минимальная замена R2: put / list / get. list — как настоящий R2 (и miniflare):
+ * по алфавиту, а с include отдаёт не больше 100 за раз, остальное — через
+ * cursor. Без этого тесты не заметили бы поиск, который видит одну страницу.
+ */
 class FakeR2 {
   constructor() {
     this.objects = new Map();
@@ -30,14 +34,19 @@ class FakeR2 {
   async put(key, body, { customMetadata } = {}) {
     this.objects.set(key, { body: new Uint8Array(body), customMetadata });
   }
-  async list({ prefix, limit }) {
-    const keys = [...this.objects.keys()].filter((k) => k.startsWith(prefix)).sort().slice(0, limit);
+  async list({ prefix, limit = 1000, include, cursor }) {
+    const keys = [...this.objects.keys()].filter((k) => k.startsWith(prefix)).sort();
+    const start = cursor ? Number(cursor) : 0;
+    const page = keys.slice(start, start + Math.min(limit, include ? 100 : 1000));
+    const next = start + page.length;
     return {
-      objects: keys.map((key) => ({
+      objects: page.map((key) => ({
         key,
         size: this.objects.get(key).body.byteLength,
         customMetadata: this.objects.get(key).customMetadata,
       })),
+      truncated: next < keys.length,
+      cursor: next < keys.length ? String(next) : undefined,
     };
   }
   async get(key) {
@@ -112,6 +121,24 @@ test("точный адрес: только его письма, даже есл
   }
   const items = await (await get(env, "/messages?address=Facebook@site1.com")).json();
   assert.deepEqual(items.map((i) => [i.to, i.subject]), [["facebook@site1.com", "код"]]);
+});
+
+test("точный адрес находится и за 150 более новыми спам-письмами (больше одной страницы R2)", async () => {
+  const env = makeEnv();
+  await putMail(env, buildKey("site1.com", 1_790_000_000_000), { to: "facebook@site1.com", from: "Meta", subject: "одобрено" });
+  for (let i = 1; i <= 150; i++) {
+    await putMail(env, buildKey("site1.com", 1_790_000_000_000 + i), { to: `spam${i}@site1.com`, from: "x", subject: "спам" });
+  }
+  const items = await (await get(env, "/messages?address=facebook@site1.com")).json();
+  assert.deepEqual(items.map((i) => i.subject), ["одобрено"]);
+});
+
+test("catch-all доставляет любой адрес: необычная часть до @ принимается", async () => {
+  const env = makeEnv();
+  const res = await ingest(env, { meta: { to: "O'Neil@site1.com", from: "x", subject: "s" } });
+  assert.equal(res.status, 200);
+  const items = await (await get(env, "/messages?domain=site1.com")).json();
+  assert.equal(items[0].to, "o'neil@site1.com");
 });
 
 test("письма до catch-all (ключи info@<domain>/…) видны в списке домена и info@", async () => {

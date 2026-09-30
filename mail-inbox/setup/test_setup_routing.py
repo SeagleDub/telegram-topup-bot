@@ -78,6 +78,36 @@ class PlanDomainTest(unittest.TestCase):
         plan = sr.plan_domain(DOMAIN, CF_MX, [], True, [catch_all_rule, OLD_INFO_RULE], catch_all=OUR_CATCH_ALL)
         self.assertEqual(plan.delete_rules, [OLD_INFO_RULE])
 
+    def test_only_old_info_rule_is_deleted(self):
+        # Наша версия ставила только info@<домен>. Правило на другой адрес или
+        # поддомен — ручное: catch-all покрывает только сам домен, удалять нельзя.
+        for value in ("admin@site1.com", "info@sub.site1.com"):
+            with self.subTest(value=value):
+                rule = dict(OLD_INFO_RULE, id="x", matchers=[{"type": "literal", "field": "to", "value": value}])
+                self.assertEqual(sr.plan_domain(DOMAIN, CF_MX, [], True, [rule]).delete_rules, [])
+
+    def test_replaced_foreign_catch_all_is_reported(self):
+        # Выключенный чужой catch-all перезаписывается — старая настройка должна
+        # остаться хотя бы в отчёте.
+        catch_all = {"enabled": False, "actions": [{"type": "forward", "value": ["boss@gmail.com"]}]}
+        text = sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all).describe()
+        self.assertIn("boss@gmail.com", text)
+        self.assertIn("был выключен", text)
+
+    def test_default_disabled_drop_catch_all_is_not_reported(self):
+        catch_all = {"enabled": False, "actions": [{"type": "drop"}]}
+        self.assertNotIn("заменён", sr.plan_domain(DOMAIN, CF_MX, [], True, [], catch_all=catch_all).describe())
+
+    def test_foreign_address_rules_are_reported_as_bypassing_bot(self):
+        # Такие адреса до бота не дойдут — байер увидит пустой список без
+        # объяснения, если в отчёте об этом ничего нет.
+        rule = {"id": "f1", "enabled": True,
+                "matchers": [{"type": "literal", "field": "to", "value": "support@site1.com"}],
+                "actions": [{"type": "forward", "value": ["boss@gmail.com"]}]}
+        text = sr.plan_domain(DOMAIN, CF_MX, [], True, [rule]).describe()
+        self.assertIn("мимо бота", text)
+        self.assertIn("support@site1.com", text)
+
     def test_foreign_literal_rules_are_left_alone(self):
         # Чужая пересылка отдельного адреса точнее catch-all и продолжит работать:
         # не конфликт, и удалять её не наше дело.
@@ -199,15 +229,18 @@ class CloudflareAPITest(unittest.TestCase):
 class FakeAPI:
     """Аккаунт a1 с активной зоной z1 без почты; записывает вызовы."""
 
-    def __init__(self, routing=None, rules=()):
+    def __init__(self, routing=None, rules=(), delete_error=None):
         self.calls = []
         self.bodies = {}
         self.routing = routing or {"enabled": False, "status": "unconfigured"}
         self.rules = list(rules)
+        self.delete_error = delete_error
 
     def call(self, method, path, body=None, *, raw=None, content_type=None):
         self.calls.append((method, path.split("?")[0]))
         self.bodies[(method, path.split("?")[0])] = body
+        if method == "DELETE" and self.delete_error:
+            raise self.delete_error
         if path.startswith("/zones?"):
             return [{"id": "z1", "status": "active", "account": {"id": "a1"}}]
         if path.endswith("/email/routing"):
@@ -267,6 +300,14 @@ class ProcessTest(unittest.TestCase):
         api = FakeAPI()
         sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
         self.assertEqual(api.bodies[("POST", "/zones/z1/email/routing/dns")], {})
+
+    def test_already_deleted_old_rule_is_not_an_error(self):
+        # 404 на удаление — правила уже нет (например, прошлый запуск упал после
+        # удаления): домен в нужном состоянии.
+        api = FakeAPI(routing={"enabled": True, "status": "ready"}, rules=[OLD_INFO_RULE],
+                      delete_error=sr.CFError(404, "not found"))
+        status, _ = sr.process(sr.Row(1, "a@b.com", "t", DOMAIN), api, CONFIG, set(), dry_run=False)
+        self.assertEqual(status, sr.OK)
 
     def test_dry_run_writes_nothing(self):
         api = FakeAPI()

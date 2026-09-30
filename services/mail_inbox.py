@@ -33,7 +33,9 @@ _DOMAIN_RE = re.compile(r"^(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$")
 _ADDRESS_RE = re.compile(r"^[a-z0-9._+-]{1,64}@(?:[a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$")
 
 # Лимиты — в единицах UTF-16: так длину считает Telegram (4096 на сообщение,
-# эмодзи — две единицы). Вместе с подписями полей сумма ~3800 — в лимит влезает.
+# эмодзи — две единицы). Худший случай вместе с подписями полей и строкой «Кому»
+# (адрес до 318 символов) — ~4080: влезает, но впритык. Поднимать лимиты — только
+# вместе с test_worst_case_mail_fits_telegram_limit.
 MAX_TEXT_LEN = 3000
 MAX_HEADER_LEN = 200
 MAX_ATTACHMENTS_LEN = 300
@@ -109,7 +111,9 @@ def button_label(item: dict, now: datetime, with_recipient: bool = False) -> str
     received = datetime.fromtimestamp(item["receivedAt"] / 1000, KYIV_TZ)
     parts = [received.strftime("%H:%M" if received.date() == now.date() else "%d.%m %H:%M")]
     if with_recipient:
-        parts.append((item.get("to") or "?").split("@")[0] + "@")
+        # Спам на catch-all идёт на длинные случайные адреса — без обрезки они
+        # съели бы всю подпись, и не было бы видно ни отправителя, ни темы.
+        parts.append(_cut((item.get("to") or "?").split("@")[0], 20) + "@")
     # Сначала разбор адреса, потом декодирование имени: декодированная запятая
     # («Doe, John») ломает parseaddr.
     name, addr = parseaddr(item.get("from") or "")
